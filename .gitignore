@@ -1,0 +1,70 @@
+# Only track Python and Bash scripts — ignore everything else
+
+# Ignore all files by default
+*
+
+# Allow directories (needed for recursion)
+!*/
+
+# Allow Python scripts
+!*.py
+
+# Allow Bash scripts
+!*.sh
+
+# Allow this gitignore
+!.gitignore
+
+# Explicitly ignore data and output files even if somehow whitelisted
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.json
+*.npy
+*.npz
+*.nii
+*.nii.gz
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.mat
+*.feather
+*.parquet
+
+# Ignore figures and images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.tiff
+*.tif
+*.bmp
+*.eps
+
+# Ignore PDFs and documents
+*.pdf
+*.doc
+*.docx
+*.pptx
+
+# Ignore compiled Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore macOS metadata
+.DS_Store
+._*
+
+# Ignore log files
+*.log
+*.out
+*.err
+
+# Ignore list/queue files (cluster job files)
+*.list
+*.list.*
+*.queue
