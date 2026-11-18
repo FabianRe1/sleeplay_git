@@ -598,6 +598,198 @@ def plot_fig6_roi_summary(
 
 
 # =====================================================================
+# Figure 7: Region x Time interaction (difference-of-differences)
+# =====================================================================
+
+def plot_fig7_roi_interaction(
+    enc_session: str, post_session: str, contrast: str,
+    subject_df: pd.DataFrame, out_dir: Path,
+) -> None:
+    """Test whether the encoding→postsleep change differs between ROIs.
+
+    For each pair of ROIs, computes:
+      diff_of_diffs = (ROI_A_post - ROI_A_enc) - (ROI_B_post - ROI_B_enc)
+    and runs a paired t-test (equivalent to region x time interaction).
+    """
+    if subject_df.empty:
+        print("  No subject-level data. Skipping fig7.")
+        return
+
+    roi_names = list(ROI_DEFINITIONS.keys())
+    sessions = [enc_session, post_session]
+
+    # --- Compute per-subject change scores for each ROI ---
+    change_by_roi: dict[str, pd.Series] = {}
+    for roi in roi_names:
+        enc_vals = subject_df[
+            (subject_df["roi"] == roi) & (subject_df["session"] == enc_session)
+        ].set_index("subject")["mean_effect"]
+        post_vals = subject_df[
+            (subject_df["roi"] == roi) & (subject_df["session"] == post_session)
+        ].set_index("subject")["mean_effect"]
+        common = sorted(set(enc_vals.index) & set(post_vals.index))
+        if common:
+            change_by_roi[roi] = post_vals.loc[common] - enc_vals.loc[common]
+
+    if len(change_by_roi) < 2:
+        print("  Need at least 2 ROIs for interaction test. Skipping fig7.")
+        return
+
+    # --- Pairwise interaction tests ---
+    from itertools import combinations
+    interaction_results = []
+    for roi_a, roi_b in combinations(roi_names, 2):
+        if roi_a not in change_by_roi or roi_b not in change_by_roi:
+            continue
+        common_subs = sorted(
+            set(change_by_roi[roi_a].index) & set(change_by_roi[roi_b].index)
+        )
+        if not common_subs:
+            continue
+
+        change_a = change_by_roi[roi_a].loc[common_subs].values
+        change_b = change_by_roi[roi_b].loc[common_subs].values
+        diff_of_diffs = change_a - change_b
+
+        t_stat, p_val = stats.ttest_rel(change_a, change_b)
+        # Also run one-sample t-test on diff_of_diffs (equivalent, for clarity)
+        t_1samp, p_1samp = stats.ttest_1samp(diff_of_diffs, 0)
+
+        interaction_results.append({
+            "ROI_A": roi_a,
+            "ROI_B": roi_b,
+            "mean_change_A": float(np.mean(change_a)),
+            "mean_change_B": float(np.mean(change_b)),
+            "mean_diff_of_diffs": float(np.mean(diff_of_diffs)),
+            "sem_diff_of_diffs": float(stats.sem(diff_of_diffs)),
+            "t_stat": float(t_stat),
+            "p_value": float(p_val),
+            "N_subjects": len(common_subs),
+            "cohens_d": float(np.mean(diff_of_diffs) / np.std(diff_of_diffs, ddof=1)),
+        })
+
+        print(f"  Interaction {roi_a} vs {roi_b}: "
+              f"diff_of_diffs = {np.mean(diff_of_diffs):.4f}, "
+              f"t({len(common_subs)-1}) = {t_stat:.3f}, p = {p_val:.4f}, "
+              f"d = {interaction_results[-1]['cohens_d']:.3f}")
+
+    if not interaction_results:
+        print("  No valid interaction tests. Skipping fig7.")
+        return
+
+    # --- Save interaction results ---
+    interaction_df = pd.DataFrame(interaction_results)
+    interaction_df.to_csv(out_dir / "roi_interaction_test.csv", index=False)
+    print(f"  Saved interaction test results to roi_interaction_test.csv")
+
+    # --- Figure: 3 panels ---
+    fig, axes = plt.subplots(1, 3, figsize=(10, 3.5))
+
+    # Panel 1: Per-ROI change scores (bar + individual dots)
+    ax = axes[0]
+    x = np.arange(len(roi_names))
+    for i, roi in enumerate(roi_names):
+        if roi not in change_by_roi:
+            continue
+        vals = change_by_roi[roi].values
+        mean_val = np.mean(vals)
+        sem_val = stats.sem(vals)
+        ax.bar(i, mean_val, 0.5, yerr=sem_val,
+               color=COLORS["paired"], edgecolor="white", linewidth=0.5,
+               capsize=3, error_kw={"lw": 0.8}, alpha=0.7)
+        jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(vals))
+        ax.scatter(np.full(len(vals), i) + jitter, vals,
+                   s=8, color="#555555", alpha=0.3, zorder=3)
+    ax.set_ylabel("Effect change\n(postsleep - encoding)")
+    ax.set_xticks(x)
+    ax.set_xticklabels([r.replace("_", " ").capitalize() for r in roi_names])
+    ax.axhline(0, color="k", lw=0.5)
+    ax.set_title("Per-ROI change", fontweight="bold")
+
+    # Panel 2: Difference-of-differences (paired lines + bar)
+    ax = axes[1]
+    for res in interaction_results:
+        roi_a, roi_b = res["ROI_A"], res["ROI_B"]
+        common_subs = sorted(
+            set(change_by_roi[roi_a].index) & set(change_by_roi[roi_b].index)
+        )
+        change_a = change_by_roi[roi_a].loc[common_subs].values
+        change_b = change_by_roi[roi_b].loc[common_subs].values
+
+        for ca, cb in zip(change_a, change_b):
+            ax.plot([0, 1], [ca, cb], color="#888888", lw=0.3, alpha=0.3)
+
+        ax.scatter(np.zeros(len(change_a)) + np.random.default_rng(42).uniform(-0.08, 0.08, len(change_a)),
+                   change_a, s=10, color=COLORS.get("paired", "#333"), alpha=0.4, zorder=3)
+        ax.scatter(np.ones(len(change_b)) + np.random.default_rng(43).uniform(-0.08, 0.08, len(change_b)),
+                   change_b, s=10, color=COLORS.get("ns", "#999"), alpha=0.4, zorder=3)
+
+        # Means
+        ax.plot([0, 1], [np.mean(change_a), np.mean(change_b)],
+                color="k", lw=2, zorder=4, marker="o", markersize=5)
+
+        # Significance bracket
+        y_top = max(np.max(change_a), np.max(change_b)) * 1.1
+        sig = _sig_label(res["p_value"])
+        ax.plot([0, 0, 1, 1], [y_top, y_top * 1.03, y_top * 1.03, y_top],
+                lw=0.8, color="k")
+        ax.text(0.5, y_top * 1.04,
+                f"{sig}\np={res['p_value']:.3f}\nd={res['cohens_d']:.2f}",
+                ha="center", va="bottom", fontsize=6.5)
+
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels([r.replace("_", " ").capitalize() for r in roi_names], fontsize=7)
+    ax.axhline(0, color="k", lw=0.5, ls="--", alpha=0.5)
+    ax.set_ylabel("Effect change\n(postsleep - encoding)")
+    ax.set_title("Paired ROI changes", fontweight="bold")
+
+    # Panel 3: Difference-of-differences distribution
+    ax = axes[2]
+    for res in interaction_results:
+        roi_a, roi_b = res["ROI_A"], res["ROI_B"]
+        common_subs = sorted(
+            set(change_by_roi[roi_a].index) & set(change_by_roi[roi_b].index)
+        )
+        dod = (change_by_roi[roi_a].loc[common_subs].values
+               - change_by_roi[roi_b].loc[common_subs].values)
+
+        parts = ax.violinplot([dod], positions=[0], showmeans=True,
+                              showmedians=False, showextrema=False)
+        for pc in parts["bodies"]:
+            pc.set_facecolor(COLORS["paired"])
+            pc.set_alpha(0.5)
+        parts["cmeans"].set_color("k")
+        parts["cmeans"].set_linewidth(1.5)
+
+        jitter = np.random.default_rng(44).uniform(-0.08, 0.08, len(dod))
+        ax.scatter(np.zeros(len(dod)) + jitter, dod,
+                   s=10, color="#555555", alpha=0.4, zorder=3)
+
+        ax.set_title(f"{roi_a.capitalize()} - {roi_b.capitalize()}\nchange",
+                     fontweight="bold")
+        ax.text(0.95, 0.95,
+                f"mean={res['mean_diff_of_diffs']:.4f}\n"
+                f"t={res['t_stat']:.2f}, p={res['p_value']:.3f}\n"
+                f"d={res['cohens_d']:.2f}, N={res['N_subjects']}",
+                transform=ax.transAxes, ha="right", va="top",
+                fontsize=6.5, bbox=dict(boxstyle="round,pad=0.3",
+                                        facecolor="wheat", alpha=0.5))
+
+    ax.axhline(0, color="k", lw=0.5, ls="--", alpha=0.5)
+    ax.set_xticks([0])
+    ax.set_xticklabels(["Diff of diffs"])
+    ax.set_ylabel("(Hipp change) - (Parietal change)")
+
+    fig.suptitle(
+        f"Region x Time interaction — {CONTRAST_LABELS[contrast]}",
+        fontsize=10, fontweight="bold",
+    )
+    fig.tight_layout()
+    _savefig(fig, out_dir, "fig7_roi_interaction")
+    print("  Saved fig7: ROI interaction test.")
+
+
+# =====================================================================
 # Main — runs both comparisons x both contrasts
 # =====================================================================
 
@@ -617,6 +809,7 @@ def run_comparison(
     subject_df = plot_fig4_roi_violins(enc_session, post_session, contrast, roi_masks, out_dir)
     plot_fig5_ortho(enc_session, post_session, contrast, out_dir)
     plot_fig6_roi_summary(enc_session, post_session, contrast, subject_df, out_dir)
+    plot_fig7_roi_interaction(enc_session, post_session, contrast, subject_df, out_dir)
 
 
 def main() -> None:

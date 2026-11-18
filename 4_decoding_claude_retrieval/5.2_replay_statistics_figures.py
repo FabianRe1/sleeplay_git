@@ -23,7 +23,7 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
-from scipy.stats import ttest_1samp, pearsonr
+from scipy.stats import ttest_1samp, pearsonr, spearmanr
 
 warnings.filterwarnings("ignore")
 
@@ -32,20 +32,28 @@ MASTER_CSV = opj(SCRIPT_DIR, "5.1_master_replay_dataframe",
                  "master_replay_metrics.csv")
 OUT_DIR = opj(SCRIPT_DIR, "5.2_replay_statistics_figures")
 
-ROIS = ["vis", "mtl", "parietal"]
-ROI_LABELS = {"vis": "Visual", "mtl": "MTL", "parietal": "Parietal"}
+# The thesis ROI labelled "parietal" was parietal_precuneus data (see 5.1).
+ROIS = ["vis", "mtl", "parietal_precuneus"]
+ROI_LABELS = {"vis": "Visual", "mtl": "MTL", "parietal_precuneus": "Par.+precuneus"}
 
-# Only Abs SODA for thesis figures
+# Metric currently being drawn. main() loops over METRIC_SETS and rebinds these
+# globals, so every figure exists once per metric (file suffix METRIC_TAG).
 RET_COL = "retrieved_soda_abs"
 CTRL_COL = "control_soda_abs"
 METRIC_NAME = "Abs SODA"
+METRIC_TAG = "abssoda"
+METRIC_SETS = [
+    # tag,      name,        retrieved,               control,               shuffled retrieved,             shuffled control
+    ("abssoda", "Abs SODA",  "retrieved_soda_abs",    "control_soda_abs",    "retrieved_soda_shuffled_abs",  "control_soda_shuffled_abs"),
+    ("sinamp",  "|SinAmp|",  "retrieved_w_amplitude", "control_w_amplitude", "shuf_retrieved_w_amplitude",   "shuf_control_w_amplitude"),
+]
 
 COLORS = {
     "presleep": "#7BAFD4",
     "postsleep": "#D4534E",
     "vis": "#3274A1",
     "mtl": "#E1812C",
-    "parietal": "#2CA02C",
+    "parietal_precuneus": "#2CA02C",
     "object": "#8C564B",
     "scene": "#9467BD",
     "correct": "#2CA02C",
@@ -84,6 +92,7 @@ def setup_style():
 # =====================================================================
 
 def _save(fig, name):
+    name = f"{name}_{METRIC_TAG}"
     fig.savefig(opj(OUT_DIR, f"{name}.pdf"))
     plt.close(fig)
     print(f"  {name}.pdf")
@@ -278,7 +287,7 @@ def fig_session_effect_alltrials(df, suffix=""):
 
     ax.set_xticks(x)
     ax.set_xticklabels([ROI_LABELS[r] for r in ROIS])
-    ax.set_ylabel("Replay strength\n(retrieved \u2212 control)")
+    ax.set_ylabel(f"{METRIC_NAME}\n(retrieved \u2212 control)")
     ax.set_title("Session effect \u2014 all trials")
     ax.axhline(0, color="black", lw=0.5, ls="--", zorder=0)
     ax.legend(frameon=False, fontsize=8, loc="upper left")
@@ -496,6 +505,7 @@ def fig_brain_behavior(df_obj, suffix=""):
                 continue
 
             r, p = pearsonr(smeans["replay"], smeans["acc"])
+            rho, p_rho = spearmanr(smeans["replay"], smeans["acc"])   # robust to single extreme subjects
 
             fig, ax = plt.subplots(figsize=(2.8, 2.8))
             ax.scatter(smeans["replay"], smeans["acc"],
@@ -509,7 +519,7 @@ def fig_brain_behavior(df_obj, suffix=""):
             ax.plot(x_line, np.polyval(z, x_line),
                     color="black", lw=1.0, ls="--", zorder=2, alpha=0.6)
 
-            ax.set_xlabel("Replay strength (ret \u2212 ctrl)")
+            ax.set_xlabel(f"{METRIC_NAME} (ret \u2212 ctrl)")
             ax.set_ylabel("Retrieval accuracy")
 
             # Session label for title
@@ -521,8 +531,9 @@ def fig_brain_behavior(df_obj, suffix=""):
                 sess_label = "post-sleep"
 
             sig_marker = _sig(p)
+            p_txt = "p < .001" if p < 0.001 else f"p = {p:.3f}"
             ax.set_title(f"{ROI_LABELS[roi]} ({sess_label})\n"
-                         f"r = {r:.2f}, p = {p:.3f} {sig_marker}",
+                         f"r = {r:.2f}, {p_txt} {sig_marker}  |  \u03c1 = {rho:.2f}, p = {p_rho:.3f}",
                          fontsize=10)
 
             fig.tight_layout()
@@ -566,7 +577,7 @@ def fig_shuffled_vs_real(df, suffix=""):
 
     ax.set_xticks(x)
     ax.set_xticklabels([ROI_LABELS[r] for r in ROIS])
-    ax.set_ylabel("Replay strength\n(retrieved \u2212 control)")
+    ax.set_ylabel(f"{METRIC_NAME}\n(retrieved \u2212 control)")
     ax.set_title("Real vs shuffled labels")
     ax.axhline(0, color="black", lw=0.5, ls="--", zorder=0)
     ax.legend(frameon=False, fontsize=8, loc="upper right")
@@ -607,7 +618,7 @@ def fig_shuffled_per_session(df, suffix=""):
 
         ax.set_xticks(x)
         ax.set_xticklabels(["Pre", "Post"])
-        ax.set_ylabel("Replay strength\n(retrieved \u2212 control)")
+        ax.set_ylabel(f"{METRIC_NAME}\n(retrieved \u2212 control)")
         ax.set_title(f"{ROI_LABELS[roi]} \u2014 real vs shuffled")
         ax.axhline(0, color="black", lw=0.5, ls="--", zorder=0)
         ax.legend(frameon=False, fontsize=8, loc="upper right")
@@ -878,6 +889,7 @@ def main():
 
     # Load data
     df = pd.read_csv(MASTER_CSV)
+    df = df[df["roi"].isin(ROIS)].copy()      # master holds more ROIs than are plotted
     df["behav_correct"] = pd.to_numeric(df["behav_correct"], errors="coerce")
     df_obj = df[df["object_scene_retrieval"] == "object"].copy()
     df_scene = df[df["object_scene_retrieval"] == "scene"].copy()
@@ -886,76 +898,80 @@ def main():
     print(f"Object: {len(df_obj)}, Scene: {len(df_scene)}")
     print(f"Output: {OUT_DIR}\n")
 
-    # === FULL (unmatched) ===
-    print("=" * 50)
-    print("  FULL (unmatched)")
-    print("=" * 50)
+    global RET_COL, CTRL_COL, METRIC_NAME, METRIC_TAG, SHUF_RET_COL, SHUF_CTRL_COL
+    for METRIC_TAG, METRIC_NAME, RET_COL, CTRL_COL, SHUF_RET_COL, SHUF_CTRL_COL in METRIC_SETS:
+        print(f"\n########## METRIC: {METRIC_NAME} ##########")
+        # === FULL (unmatched) ===
+        print("=" * 50)
+        print("  FULL (unmatched)")
+        print("=" * 50)
 
-    print("\n  Analysis 2 — Replay detection:")
-    fig_replay_detection_collapsed(df)
-    fig_replay_detection_per_session(df)
-    fig_forest_detection(df)
+        print("\n  Analysis 2 — Replay detection:")
+        fig_replay_detection_collapsed(df)
+        fig_replay_detection_per_session(df)
+        fig_forest_detection(df)
 
-    print("\n  Analysis 3 — Session effect:")
-    fig_session_effect_alltrials(df)
-    fig_session_effect_objects(df_obj)
-    fig_session_effect_scenes(df_scene)
+        print("\n  Analysis 3 — Session effect:")
+        fig_session_effect_alltrials(df)
+        fig_session_effect_objects(df_obj)
+        fig_session_effect_scenes(df_scene)
 
-    print("\n  Analysis 4 — Accuracy:")
-    fig_accuracy_effect(df)
+        print("\n  Analysis 4 — Accuracy:")
+        fig_accuracy_effect(df)
 
-    print("\n  Analysis 5 — Trial type:")
-    fig_trial_type(df)
+        print("\n  Analysis 5 — Trial type:")
+        fig_trial_type(df)
 
-    print("\n  Analysis 7 — Brain-behavior:")
-    fig_brain_behavior(df_obj)
+        print("\n  Analysis 7 — Brain-behavior:")
+        fig_brain_behavior(df_obj)
 
-    print("\n  Analysis 9 — Shuffled validation:")
-    fig_shuffled_vs_real(df)
-    fig_shuffled_per_session(df)
+        print("\n  Analysis 9 — Shuffled validation:")
+        fig_shuffled_vs_real(df)
+        fig_shuffled_per_session(df)
 
-    print("\n  Analysis 11 — Run effects:")
-    fig_run_effects(df)
+        print("\n  Analysis 11 — Run effects:")
+        fig_run_effects(df)
 
-    print("\n  Analysis 13 — Fit quality:")
-    fig_r2_median_split(df)
-    fig_r2_as_metric(df)
-    fig_r2_session_effect(df)
+        print("\n  Analysis 13 — Fit quality:")
+        if METRIC_TAG == "sinamp":
+            fig_r2_median_split(df)
+            fig_r2_as_metric(df)
+            fig_r2_session_effect(df)
 
-    # === MATCHED (postsleep first-half) ===
-    print("\n" + "=" * 50)
-    print("  MATCHED (postsleep first-half)")
-    print("=" * 50)
+        # === MATCHED (postsleep first-half) ===
+        print("\n" + "=" * 50)
+        print("  MATCHED (postsleep first-half)")
+        print("=" * 50)
 
-    df_m = _subsample_postsleep_first_half(df)
-    df_obj_m = df_m[df_m["object_scene_retrieval"] == "object"].copy()
-    df_scene_m = df_m[df_m["object_scene_retrieval"] == "scene"].copy()
+        df_m = _subsample_postsleep_first_half(df)
+        df_obj_m = df_m[df_m["object_scene_retrieval"] == "object"].copy()
+        df_scene_m = df_m[df_m["object_scene_retrieval"] == "scene"].copy()
 
-    ref_roi = ROIS[0]
-    n_pre = len(df_m[(df_m["session"] == "presleep")
-                      & (df_m["roi"] == ref_roi)])
-    n_post = len(df_m[(df_m["session"] == "postsleep")
-                       & (df_m["roi"] == ref_roi)])
-    print(f"  Pre: {n_pre}, Post: {n_post} trials/ROI\n")
+        ref_roi = ROIS[0]
+        n_pre = len(df_m[(df_m["session"] == "presleep")
+                          & (df_m["roi"] == ref_roi)])
+        n_post = len(df_m[(df_m["session"] == "postsleep")
+                           & (df_m["roi"] == ref_roi)])
+        print(f"  Pre: {n_pre}, Post: {n_post} trials/ROI\n")
 
-    print("  Analysis 2 — Replay detection (matched):")
-    fig_replay_detection_collapsed(df_m, suffix="_matched")
-    fig_replay_detection_per_session(df_m, suffix="_matched")
-    fig_forest_detection(df_m, suffix="_matched")
+        print("  Analysis 2 — Replay detection (matched):")
+        fig_replay_detection_collapsed(df_m, suffix="_matched")
+        fig_replay_detection_per_session(df_m, suffix="_matched")
+        fig_forest_detection(df_m, suffix="_matched")
 
-    print("\n  Analysis 3 — Session effect (matched):")
-    fig_session_effect_alltrials(df_m, suffix="_matched")
-    fig_session_effect_objects(df_obj_m, suffix="_matched")
-    fig_session_effect_scenes(df_scene_m, suffix="_matched")
+        print("\n  Analysis 3 — Session effect (matched):")
+        fig_session_effect_alltrials(df_m, suffix="_matched")
+        fig_session_effect_objects(df_obj_m, suffix="_matched")
+        fig_session_effect_scenes(df_scene_m, suffix="_matched")
 
-    print("\n  Analysis 4 — Accuracy (matched):")
-    fig_accuracy_effect(df_m, suffix="_matched")
+        print("\n  Analysis 4 — Accuracy (matched):")
+        fig_accuracy_effect(df_m, suffix="_matched")
 
-    print("\n  Analysis 5 — Trial type (matched):")
-    fig_trial_type(df_m, suffix="_matched")
+        print("\n  Analysis 5 — Trial type (matched):")
+        fig_trial_type(df_m, suffix="_matched")
 
-    print("\n  Analysis 7 — Brain-behavior (matched):")
-    fig_brain_behavior(df_obj_m, suffix="_matched")
+        print("\n  Analysis 7 — Brain-behavior (matched):")
+        fig_brain_behavior(df_obj_m, suffix="_matched")
 
     print(f"\nDone. All panels saved to: {OUT_DIR}")
 

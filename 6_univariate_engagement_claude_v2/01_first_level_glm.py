@@ -50,6 +50,7 @@ from utils import (
     load_functional_data,
     load_confounds,
     get_mni_mask,
+    compute_mean_remembered_rt,
     extract_events_for_run,
     pad_to_global,
     build_padded_drift_regressors,
@@ -98,6 +99,9 @@ def run_first_level(subject: str, session: str, trim: bool = False) -> None:
     obj_enc_to_cat = load_localizer_category_mapping(sub_behav, sub_num)
     df_behavior = load_retrieval_behavior(sub_behav, sub_num, session, obj_enc_to_cat)
 
+    # --- Compute mean remembered RT (used as duration for non-remembered trials) ---
+    mean_remembered_rt = compute_mean_remembered_rt(df_behavior)
+
     # --- Load functional data ---
     func_imgs, selected_indices = load_functional_data(sub_mri, session)
     confs = load_confounds(sub_mri, session, selected_indices)
@@ -141,7 +145,7 @@ def run_first_level(subject: str, session: str, trim: bool = False) -> None:
             print(f"[run {run_nr}] No matching functional data (idx={data_idx}). Skipping.")
             continue
 
-        events = extract_events_for_run(df_behavior, run_nr)
+        events = extract_events_for_run(df_behavior, run_nr, nonremem_duration=mean_remembered_rt)
         if events.empty:
             print(f"[run {run_nr}] No valid events. Skipping.")
             continue

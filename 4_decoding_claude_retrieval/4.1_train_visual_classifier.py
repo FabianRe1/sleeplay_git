@@ -48,6 +48,7 @@ from utils import (
     load_func_and_confounds,
     mask_and_clean,
     load_mask,
+    assert_func_conf_match,
 )
 
 # =====================================================================
@@ -277,6 +278,7 @@ def load_func_data(path_fmriprep, sub_num, session, debug_mode):
     print('=======================')
     print(conf_paths)
     print('=======================')
+    assert_func_conf_match(func_paths, conf_paths)
     confounds = [pd.read_csv(p, sep='\t') for p in conf_paths]
 
     return func_imgs, confounds
@@ -583,7 +585,7 @@ def main():
         "/beegfs/g/schuck/bbd7515/sleeplay/l_loc_main/data/derivatives"
     )
     path_masks = opj(
-        root_folder, 'code', '3_reliability_voxel_selection',
+        root_folder, 'sleeplay_git', '3_reliability_voxel_selection',
         'combine_loc1_and_loc3_masks',
     )
 

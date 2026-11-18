@@ -203,7 +203,8 @@ def fig_classifier_performance(results_dir: str, out_dir: str, condition: int = 
 def fig_retrieval_timecourse(soda_csv_dir: str, roi: str, out_dir: str, pre_post: str):
     """Matched vs unmatched classifier probability timecourse with FDR stars."""
     csv_files = sorted(glob.glob(opj(soda_csv_dir, "*.csv")))
-    csv_files = [f for f in csv_files if f"ROI_{roi}" in f]
+    # full ROI token, not a prefix ("ROI_parietal" also matches "ROI_parietal_precuneus")
+    csv_files = [f for f in csv_files if f"ROI_{roi}_decoding" in f]
     if not csv_files:
         print(f"  [SKIP] No SODA input CSVs for ROI={roi}")
         return

@@ -32,7 +32,14 @@ def script_output_dir(script_file, subfolder=""):
 # CONFIGURATION
 # =====================================================================
 
-FOCUS_ROIS = ["vis", "mtl", "parietal"]
+# NOTE: the thesis ROI labelled "parietal" was parietal_precuneus data — before
+# 2026-08-06 a substring match in 4.6 loaded parietal_precuneus for "parietal".
+# The labels below are the ROIs the data actually come from.
+FOCUS_ROIS = ["vis", "mtl", "parietal_precuneus", "precuneus", "parietal"]
+
+# 4.8 (FFT) was archived to _old_analyses/ on 2026-09-21 (never re-run after the
+# August data fixes). 5.2 does not use FFT metrics. Keep False unless 4.8 is restored and re-run.
+MERGE_FFT = False
 SESSIONS = ["presleep", "postsleep"]
 
 # =====================================================================
@@ -155,7 +162,7 @@ def main():
             sinus_df = load_sinusoidal_trial_level(script_dir, roi, session)
 
             # --- FFT ---
-            fft_df = load_fft_trial_level(script_dir, roi, session)
+            fft_df = load_fft_trial_level(script_dir, roi, session) if MERGE_FFT else None
 
             if soda_df is None:
                 print(f"  Skipping {roi}/{session}: no SODA data")
@@ -178,7 +185,7 @@ def main():
                 print(f"  Sinusoidal: NOT AVAILABLE")
 
             # Merge FFT
-            if fft_df is not None:
+            if fft_df is not None and MERGE_FFT:
                 soda_df = soda_df.merge(
                     fft_df.drop(columns=[c for c in ["object_scene_retrieval", "retrieval_target",
                                                       "behav_correct", "retrieved_position"]

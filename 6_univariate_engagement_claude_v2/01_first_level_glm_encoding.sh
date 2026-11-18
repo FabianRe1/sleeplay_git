@@ -12,7 +12,7 @@ set -euo pipefail
 # ==============================================================================
 
 PATH_DATA="$BEEGFS/Sleeplay_Hummel"
-PATH_CODE="$BEEGFS/Sleeplay_Hummel/code/6_univariate_engagement_claude_v2"
+PATH_CODE="$BEEGFS/Sleeplay_Hummel/sleeplay_git/6_univariate_engagement_claude_v2"
 PATH_LOG="${PATH_DATA}/logs/6_GLM_v2_encoding"
 PATH_SHARED_DERIV="/beegfs/g/schuck/bbd7515/sleeplay/l_loc_main/data/derivatives"
 TASK_LIST="${PATH_CODE}/glm_enc_task.list"

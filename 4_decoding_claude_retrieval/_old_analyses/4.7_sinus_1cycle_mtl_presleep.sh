@@ -10,6 +10,6 @@
 source /sw/batch/init.sh
 source /usw/u/bbc6124/u/bbc6124//venvs/myenv/bin/activate
 
-cd "$BEEGFS/Sleeplay_Hummel/code/4_decoding_claude_retrieval"
+cd "$BEEGFS/Sleeplay_Hummel/sleeplay_git/4_decoding_claude_retrieval"
 
 python 4.7_sinus_1cycle.py mtl presleep

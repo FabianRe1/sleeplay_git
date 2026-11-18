@@ -363,11 +363,37 @@ def get_mni_mask(reference_img):
 # Event extraction from behavioral data
 # =====================================================================
 
+def compute_mean_remembered_rt(df_behavior: pd.DataFrame) -> float:
+    """Compute mean response time across all remembered (button-press) trials.
+
+    Looks at q_mark_press rows across all runs for this subject/session.
+    Used as the duration for non-remembered trials where the subject
+    timed out without pressing.
+    """
+    press_mask = df_behavior["label_type"] == "q_mark_press"
+    rts = pd.to_numeric(df_behavior.loc[press_mask, "ret_resp"], errors="coerce").dropna()
+
+    if len(rts) == 0:
+        raise ValueError("No q_mark_press trials found — cannot compute mean remembered RT.")
+
+    mean_rt = float(rts.mean())
+    print(f"  Mean remembered RT: {mean_rt:.3f}s (from {len(rts)} trials)")
+    return mean_rt
+
+
 def extract_events_for_run(
     df_behavior: pd.DataFrame,
     run_nr: int,
+    nonremem_duration: Optional[float] = None,
 ) -> pd.DataFrame:
     """Extract remembered/not_remembered events for a single run.
+
+    Parameters
+    ----------
+    nonremem_duration : float, optional
+        If provided, use this fixed duration (in seconds) for all
+        not_remembered trials instead of the ITI/timeout duration.
+        Typically set to the mean remembered RT for the subject.
 
     Returns a nilearn-compatible events DataFrame with columns:
     onset, duration, trial_type.
@@ -381,6 +407,8 @@ def extract_events_for_run(
         return pd.DataFrame(columns=["onset", "duration", "trial_type"])
 
     # Fill missing ret_resp with ITIs (timeout = not remembered)
+    # This ensures all trials have a duration; non-remembered durations
+    # are overridden below if nonremem_duration is provided.
     if "ITIs" in df_run.columns:
         ret_missing = df_run["ret_resp"].isna() | (df_run["ret_resp"].astype(str).str.strip() == "")
         iti_has_val = ~(df_run["ITIs"].isna() | (df_run["ITIs"].astype(str).str.strip() == ""))
@@ -414,6 +442,16 @@ def extract_events_for_run(
         "duration": pd.to_numeric(df_qm["ret_resp"], errors="coerce"),
         "trial_type": df_qm["remembered"].astype(str),
     }).dropna(subset=["onset", "duration"])
+
+    # Override non-remembered durations with mean remembered RT
+    if nonremem_duration is not None:
+        not_rem_mask = events["trial_type"] == "not_remembered"
+        n_replaced = not_rem_mask.sum()
+        if n_replaced > 0:
+            old_durations = events.loc[not_rem_mask, "duration"]
+            events.loc[not_rem_mask, "duration"] = nonremem_duration
+            print(f"  [run {run_nr}] Replaced {n_replaced} non-remembered durations: "
+                  f"mean {old_durations.mean():.3f}s -> {nonremem_duration:.3f}s")
 
     n_rem = (events["trial_type"] == "remembered").sum()
     n_not = (events["trial_type"] == "not_remembered").sum()

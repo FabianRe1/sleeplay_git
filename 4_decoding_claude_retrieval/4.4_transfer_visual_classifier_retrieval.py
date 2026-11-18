@@ -41,12 +41,22 @@ from utils import (
     CONFOUND_VARS,
     build_sequence_dict_from_df_behavior_enc,
     map_sequence_objects_to_categories,
+    assert_func_conf_match,
 )
 
 
 # =====================================================================
 # Session-specific configuration
 # =====================================================================
+
+# Which event the 10-TR decoding window is anchored to.
+#   "cue"    : the scene / day-night retrieval cue (sc_no4obj / d_no4sc)
+#   "q_mark" : the response prompt, a fixed 1.015 s (0-1 TR) later
+ALIGN_TO = "cue"
+
+# Retrieval cue rows: object retrieval (scene shown, object recalled) and
+# scene retrieval (day/night shown, scene recalled).
+RETRIEVAL_CUE_LABELS = ("sc_no4obj", "d_no4sc")
 
 SESSION_CONFIG = {
     "presleep": {
@@ -138,47 +148,47 @@ def load_main_task_behavior(root_folder: str, sub: str, cfg: dict):
 
     if nses_num == "0":
         # ----- PRESLEEP: encoding + retrieval may live in the same folder -----
-        required_label_types = {"sc_enc_fix", "d_no4sc"}
+        # The retrieval source is chosen by what a folder actually CONTAINS
+        # (rows with a retrieval cue), not by a proxy label. The previous rule
+        # required both 'sc_enc_fix' and 'd_no4sc' in the highest-step folder and
+        # otherwise fell back to step0 unconditionally — which silently produced
+        # an empty output for subjects whose retrieval trials live in a higher
+        # step while step0 holds only encoding (s51, and s13 in principle).
+        def _has_retrieval(df: pd.DataFrame) -> bool:
+            return ("label_type" in df.columns
+                    and df["label_type"].isin(RETRIEVAL_CUE_LABELS).any())
 
-        if "label_type" not in df_best.columns:
-            print(
-                "[behavior] best step folder has no 'label_type' column -> using it for encoding; "
-                "falling back to step0 for retrieval."
-            )
-            use_best_for_both = False
-            label_types_present = set()
-        else:
-            label_types_present = set(df_best["label_type"].dropna().astype(str).unique().tolist())
-            use_best_for_both = required_label_types.issubset(label_types_present)
+        df_behavior_enc = df_best.copy()
 
-        if use_best_for_both:
-            print(
-                f"[behavior] Using highest step folder for encoding+retrieval (NO row subsetting). "
-                f"label_type contains: {sorted(list(label_types_present))}"
-            )
-            df_behavior_enc = df_best.copy()
+        if _has_retrieval(df_best):
+            print(f"[behavior] Retrieval trials found in {os.path.basename(nses_0_folder)} "
+                  f"-> using it for encoding + retrieval.")
             df_behavior_retrieval = df_best.copy()
         else:
-            print(
-                f"[behavior] Highest step folder missing expected label_type(s). "
-                f"Need {sorted(list(required_label_types))}, found {sorted(list(label_types_present))}. "
-                f"-> Using highest step for encoding; loading step0 for retrieval."
-            )
-            df_behavior_enc = df_best.copy()
-
-            # Fall back to step0 folder for retrieval
-            path_behavior_step0 = opj(
-                root_folder, 'behavior', sub, 'behav', 'main',
-                f'sub{sub_num}_main_task_nses_0_step0',
-                f'output_df_sub{sub_num}_w_HRF.csv'
-            )
-            try:
-                df_fallback = pd.read_csv(path_behavior_step0, sep=",")
-            except Exception as e:
-                raise FileNotFoundError(
-                    f"Could not load step0 behavior file for retrieval: {path_behavior_step0}. Error: {e}"
+            # search the remaining nses_0 folders, highest step first
+            df_behavior_retrieval = None
+            for folder in sorted(nses_0_folders,
+                                 key=lambda f: int(re.search(r'step(\d+)', f).group(1)),
+                                 reverse=True):
+                if folder == nses_0_folder:
+                    continue
+                cand_path = opj(folder, f'output_df_sub{sub_num}_w_HRF.csv')
+                try:
+                    cand = pd.read_csv(cand_path, sep=",")
+                except Exception:
+                    continue
+                if _has_retrieval(cand):
+                    print(f"[behavior] Highest step folder has no retrieval trials -> "
+                          f"using {os.path.basename(folder)} for retrieval "
+                          f"({int(cand['label_type'].isin(RETRIEVAL_CUE_LABELS).sum())} cue rows).")
+                    df_behavior_retrieval = cand
+                    break
+            if df_behavior_retrieval is None:
+                raise ValueError(
+                    f"No nses_0 folder for {sub} contains retrieval trials "
+                    f"({', '.join(sorted(RETRIEVAL_CUE_LABELS))}). "
+                    f"Checked: {[os.path.basename(f) for f in nses_0_folders]}"
                 )
-            df_behavior_retrieval = df_fallback.copy()
 
     else:
         # ----- POSTSLEEP (nses_2): encoding from nses_0, retrieval from nses_2 -----
@@ -212,7 +222,22 @@ def load_main_task_behavior(root_folder: str, sub: str, cfg: dict):
 
 
 def prepare_retrieval_df(df_behavior_retrieval: pd.DataFrame, obj_enc_to_cat: dict) -> pd.DataFrame:
-    """Add obj_cat column and forward-fill trl_nr / run_nr."""
+    """Add obj_cat column, forward-fill trl_nr / run_nr, add the retrieval anchor.
+
+    Trial structure of a retrieval trial (verified for all 8051 trials across
+    subjects and sessions):
+
+        ret_fix -> obj_order_cue -> sc_no4obj / d_no4sc -> q_mark -> q_mark_press
+
+    The cue row (``sc_no4obj`` / ``d_no4sc``) shows which sequence and which
+    position is being asked about; the ``q_mark`` row, a fixed 1.015 s later, is
+    the moment the participant actually has to retrieve. Retrieval-related
+    reactivation should therefore be timed from the q_mark, which is what
+    ALIGN_TO selects. The q_mark is always exactly one row after the cue.
+
+    Also carries the response time (``ret_resp`` of the following
+    ``q_mark_press`` row) through to the output.
+    """
     if "obj_ret_targ" not in df_behavior_retrieval.columns:
         raise KeyError(
             "df_behavior_retrieval missing required column 'obj_ret_targ'. "
@@ -223,7 +248,42 @@ def prepare_retrieval_df(df_behavior_retrieval: pd.DataFrame, obj_enc_to_cat: di
         df_behavior_retrieval['trl_nr'] = df_behavior_retrieval['trl_nr'].ffill()
     if "run_nr" in df_behavior_retrieval.columns:
         df_behavior_retrieval['run_nr'] = df_behavior_retrieval['run_nr'].ffill()
-    return df_behavior_retrieval
+
+    # --- retrieval anchor + response time, taken from the rows after the cue ---
+    df = df_behavior_retrieval.reset_index(drop=True)
+    labels = df['label_type'].values
+    cue_rows = np.where(np.isin(labels, RETRIEVAL_CUE_LABELS))[0]
+
+    df['TR_onset_qmark'] = np.nan
+    df['TR_onset_anchor'] = np.nan
+    df['ret_rt'] = np.nan
+
+    n_missing_qmark = 0
+    for i in cue_rows:
+        j = next((k for k in range(i + 1, min(i + 4, len(df))) if labels[k] == 'q_mark'), None)
+        if j is None:
+            n_missing_qmark += 1
+        else:
+            df.at[i, 'TR_onset_qmark'] = df.at[j, 'TR_time_onset']
+            k = next((m for m in range(j + 1, min(j + 3, len(df))) if labels[m] == 'q_mark_press'), None)
+            if k is not None:
+                df.at[i, 'ret_rt'] = df.at[k, 'ret_resp']
+
+    if ALIGN_TO == "q_mark":
+        # fall back to the cue onset if a q_mark is ever missing, and say so
+        df['TR_onset_anchor'] = df['TR_onset_qmark'].fillna(df['TR_time_onset'])
+        if n_missing_qmark:
+            print(f"WARNING: {n_missing_qmark}/{len(cue_rows)} retrieval trials have no q_mark row; "
+                  f"those fall back to the cue onset.")
+    elif ALIGN_TO == "cue":
+        df['TR_onset_anchor'] = df['TR_time_onset']
+    else:
+        raise ValueError(f"ALIGN_TO must be 'q_mark' or 'cue', got '{ALIGN_TO}'")
+
+    shift = (df.loc[cue_rows, 'TR_onset_qmark'] - df.loc[cue_rows, 'TR_time_onset']).dropna()
+    print(f"[alignment] anchoring the decoding window to '{ALIGN_TO}' "
+          f"({len(cue_rows)} retrieval trials; q_mark is {shift.mean():.2f} TRs after the cue on average)")
+    return df
 
 
 # =====================================================================
@@ -252,6 +312,9 @@ def load_and_preprocess_fmri(
         f'{sub_mri}_{mri_session}_task-mem*_run*_desc-confounds_timeseries.tsv'
     )
     path_confs = sorted(glob.glob(path_confs), key=lambda f: os.path.basename(f))
+    # func and confound lists are paired by position further down — verify they
+    # actually correspond before anything is cleaned with the wrong confounds
+    assert_func_conf_match(path_func, path_confs)
     confs = [pd.read_csv(p, sep='\t') for p in path_confs]
 
     # Mask, smooth, detrend, z-score
@@ -335,14 +398,21 @@ def build_run_nr_mapping(
     except Exception:
         observed_run_nrs = []
 
-    run_nr_to_data_idx = {}
-    if len(observed_run_nrs) >= 1:
-        for i, rn in enumerate(observed_run_nrs[:n_retrieval_runs]):
-            run_nr_to_data_idx[int(rn)] = i
-    else:
-        for i in range(n_retrieval_runs):
-            run_nr_to_data_idx[i + 1] = i
-    return run_nr_to_data_idx
+    # The behavioural run numbers are mapped onto the selected fMRI runs BY
+    # POSITION (sorted run_nr -> data index 0, 1, ...). That is only valid when
+    # the two sets have the same size: with fewer behavioural runs the later
+    # fMRI runs are never addressed, and with more the list is silently
+    # truncated, so every trial after the first missing run would be paired with
+    # a different run's fMRI data — without any downstream symptom.
+    if len(observed_run_nrs) != n_retrieval_runs:
+        raise ValueError(
+            f"Found {len(observed_run_nrs)} behavioural retrieval run numbers "
+            f"{observed_run_nrs}, but {n_retrieval_runs} fMRI retrieval runs were "
+            f"selected. The behaviour-to-fMRI run mapping is positional and cannot "
+            f"be trusted when the counts differ — check this subject's behaviour file."
+        )
+
+    return {int(rn): i for i, rn in enumerate(observed_run_nrs)}
 
 
 # =====================================================================
@@ -386,7 +456,7 @@ def decode_object_retrieval(
         fmri_data = retrieval_data_list[data_idx]
 
         try:
-            onset_tr = int(np.round(row['TR_time_onset']))
+            onset_tr = int(np.round(row['TR_onset_anchor']))
         except Exception:
             continue
 
@@ -451,6 +521,7 @@ def decode_object_retrieval(
                     rows["target_classifier_matched"].append(1 if class_label == target_object else 0)
                     rows["probability_from_classifier"].append(probs_obj[t_idx, class_idx])
                     rows["behav_correct"].append(catch_trial_pressed)
+                    rows["ret_rt"].append(row.get("ret_rt", np.nan))
 
                     if not sequence_struct_written:
                         rows["full_structured_sequence_object"].append(sequence_dict_obj_json)
@@ -500,7 +571,7 @@ def decode_scene_retrieval(
             continue
 
         fmri_data = retrieval_data_list[data_idx]
-        onset_tr = int(np.round(row['TR_time_onset']))
+        onset_tr = int(np.round(row['TR_onset_anchor']))
 
         window_idxs = (onset_tr + tr_window).astype(int)
         n_tp = fmri_data.shape[0]
@@ -549,6 +620,7 @@ def decode_scene_retrieval(
                     rows["target_classifier_matched"].append(1 if class_label == target_scene_ret else 0)
                     rows["probability_from_classifier"].append(probs[t_idx, class_idx])
                     rows["behav_correct"].append(catch_trial_pressed)
+                    rows["ret_rt"].append(row.get("ret_rt", np.nan))
 
                     if not sequence_struct_written:
                         rows["full_structured_sequence_object"].append(sequence_dict_obj_json)
@@ -585,7 +657,9 @@ def plot_scene_decoding(
         plt.plot(tr_window, grand_avg_scene, color='black', linewidth=4, label='Grand average')
 
     plt.axvline(0, color='red', linestyle='--')
-    plt.xlabel('TRs from onset + 5 secs HRF lag')
+    # TR 0 is the raw stimulus onset here (TR_time_onset, not TR_time_onset_w_HRF),
+    # so the classifier response is expected around TR 3 (~5 s HRF lag)
+    plt.xlabel('TRs from onset')
     plt.ylabel('P(correct scene class)')
     plt.title(f'Scene decoding during object retrieval (subject {sub})')
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -615,7 +689,9 @@ def plot_object_decoding(
         plt.plot(tr_window, grand_avg_object, color='black', linewidth=4, label='Grand average')
 
     plt.axvline(0, color='red', linestyle='--')
-    plt.xlabel('TRs from onset + 5 secs HRF lag')
+    # TR 0 is the raw stimulus onset here (TR_time_onset, not TR_time_onset_w_HRF),
+    # so the classifier response is expected around TR 3 (~5 s HRF lag)
+    plt.xlabel('TRs from onset')
     plt.ylabel('P(correct object class)')
     plt.title(f'Object decoding during object retrieval (subject {sub})')
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -741,7 +817,7 @@ def main():
     # -----------------------------------------------------------------
     root_folder = get_root(".my_hidden_root_file")
     path_fmriprep = "/beegfs/g/schuck/bbd7515/sleeplay/l_loc_main/data/derivatives"
-    path_masks = opj(root_folder, 'code', '3_reliability_voxel_selection', 'combine_loc1_and_loc3_masks')
+    path_masks = opj(root_folder, 'sleeplay_git', '3_reliability_voxel_selection', 'combine_loc1_and_loc3_masks')
     path_clf_dir = opj(os.path.dirname(os.path.abspath(__file__)), '4.1_train_visual_classifier', 'classifiers')
 
     TR = 1.5
@@ -837,12 +913,16 @@ def main():
         "target_classifier_matched": [],
         "probability_from_classifier": [],
         "behav_correct": [],
+        "ret_rt": [],
         "full_structured_sequence_object": [],
         "full_structured_sequence_category": [],
     }
 
-    sequence_dict_obj_json = json.dumps(sequence_dict_obj, ensure_ascii=False, sort_keys=True)
-    sequence_dict_cat_json = json.dumps(sequence_dict_cat, ensure_ascii=False, sort_keys=True)
+    # NOTE: do NOT sort keys — the scene keys are ordered by sequence position
+    # (as encoded), and sorting them alphabetically destroys that order, which
+    # downstream SODA fits rely on.
+    sequence_dict_obj_json = json.dumps(sequence_dict_obj, ensure_ascii=False)
+    sequence_dict_cat_json = json.dumps(sequence_dict_cat, ensure_ascii=False)
     sequence_struct_written = False
 
     # -----------------------------------------------------------------

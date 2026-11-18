@@ -110,6 +110,40 @@ CONFOUND_VARS = [
 # 4. fMRI DATA LOADING AND PREPROCESSING
 # =====================================================================
 
+def assert_func_conf_match(func_paths: list[str], conf_paths: list[str]) -> None:
+    """Fail loudly if functional images and confound files do not correspond.
+
+    Both lists are built from independent globs and are afterwards paired by
+    POSITION (``confounds[i]`` cleans ``func[i]``). A missing or extra confound
+    file would therefore shift the pairing and clean every subsequent run with
+    another run's motion parameters — silently, and without any downstream
+    symptom. The run token in the filenames is the only thing tying the two
+    together, so it is checked explicitly.
+    """
+    def _run_tokens(paths: list[str]) -> list[str]:
+        tokens = []
+        for p in paths:
+            m = re.search(r"run-(\d+)", os.path.basename(p))
+            tokens.append(m.group(1) if m else os.path.basename(p))
+        return tokens
+
+    if len(func_paths) != len(conf_paths):
+        raise ValueError(
+            f"Mismatch between functional images ({len(func_paths)}) and confound "
+            f"files ({len(conf_paths)}). They are paired by position, so this would "
+            f"clean runs with the wrong confounds.\n"
+            f"  func:      {[os.path.basename(p) for p in func_paths]}\n"
+            f"  confounds: {[os.path.basename(p) for p in conf_paths]}"
+        )
+
+    runs_func, runs_conf = _run_tokens(func_paths), _run_tokens(conf_paths)
+    if runs_func != runs_conf:
+        raise ValueError(
+            f"Functional images and confound files are not in the same run order: "
+            f"func runs {runs_func} vs confound runs {runs_conf}."
+        )
+
+
 def load_func_and_confounds(
     fmriprep_dir: str,
     sub_mri: str,
@@ -138,6 +172,7 @@ def load_func_and_confounds(
         f"{sub_mri}_{session}_{task_glob}_run*_desc-confounds_timeseries.tsv",
     )
     conf_paths = sorted(glob.glob(conf_pattern), key=os.path.basename)
+    assert_func_conf_match(func_paths, conf_paths)
     confounds = [pd.read_csv(p, sep="\t") for p in conf_paths]
 
     return func_imgs, confounds
@@ -157,6 +192,11 @@ def mask_and_clean(
     """
     if conf_vars is None:
         conf_vars = CONFOUND_VARS
+    if len(func_imgs) != len(confounds):
+        raise ValueError(
+            f"{len(func_imgs)} functional runs but {len(confounds)} confound tables — "
+            "they are paired by position, so cleaning would use the wrong run's confounds."
+        )
     masked = [masking.apply_mask(img, mask_img, smoothing_fwhm=smoothing_fwhm) for img in func_imgs]
     cleaned = [
         signal.clean(

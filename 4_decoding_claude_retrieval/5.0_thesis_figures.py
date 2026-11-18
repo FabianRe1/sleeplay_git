@@ -2,7 +2,8 @@
 """Thesis chapter figures — individual panels for manual composition.
 
 Generates one PDF per panel from the master replay dataframe (5.1).
-Only absolute SODA (abssoda) metric is used.
+Both metrics are drawn: absolute SODA (abssoda) and the absolute SinAmp
+amplitude of the thesis sinusoid fit (sinamp; 4.7 preset "thesis").
 Filenames encode: plottype_metric_scope.pdf
 
 Condition tests (pre vs post) use a linear mixed model
@@ -35,7 +36,7 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import statsmodels.formula.api as smf
-from scipy.stats import ttest_1samp, pearsonr
+from scipy.stats import ttest_1samp, pearsonr, spearmanr
 
 warnings.filterwarnings("ignore")
 
@@ -43,12 +44,14 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = opj(SCRIPT_DIR, "5.0_thesis_figures")
 MASTER_CSV = opj(SCRIPT_DIR, "5.1_master_replay_dataframe", "master_replay_metrics.csv")
 
-ROIS = ["vis", "mtl", "parietal"]
-ROI_LABELS = {"vis": "Visual cortex", "mtl": "MTL", "parietal": "Parietal"}
+# The thesis ROI labelled "parietal" was parietal_precuneus data (see 5.1).
+ROIS = ["vis", "mtl", "parietal_precuneus"]
+ROI_LABELS = {"vis": "Visual cortex", "mtl": "MTL", "parietal_precuneus": "Parietal + precuneus"}
 
 # (ret_col, ctrl_col, short_name, display_name)
 METRICS = [
     ("retrieved_soda_abs", "control_soda_abs", "abssoda", "Abs SODA"),
+    ("retrieved_w_amplitude", "control_w_amplitude", "sinamp", "|SinAmp|"),   # 5.1 stores |amplitude|
 ]
 
 COLORS = {
@@ -56,7 +59,7 @@ COLORS = {
     "postsleep": "#D4534E",
     "vis": "#3274A1",
     "mtl": "#E1812C",
-    "parietal": "#2CA02C",
+    "parietal_precuneus": "#2CA02C",
 }
 
 
@@ -253,7 +256,10 @@ def panel_session_alltrials_grouped(df, ret_col, ctrl_col, metric_name, metric_s
     ax.set_ylabel(f"{metric_name}\n(ret $-$ ctrl)")
     ax.set_title("All trials: pre vs post sleep")
     ax.axhline(0, color="black", lw=0.5, ls="--", zorder=0)
-    ax.legend(["Pre-sleep", "Post-sleep"], frameon=False, fontsize=9)
+    from matplotlib.patches import Patch
+    ax.legend(handles=[Patch(color=COLORS["presleep"], label="Pre-sleep"),
+                       Patch(color=COLORS["postsleep"], label="Post-sleep")],
+              frameon=False, fontsize=9, loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=2)
 
     # Pre vs post paired t-tests per ROI
     ylim = ax.get_ylim()
@@ -334,6 +340,7 @@ def panel_brainbehavior(df_obj, roi, variant, ret_col, ctrl_col,
         return
 
     r, p = pearsonr(smeans["replay"], smeans["acc"])
+    rho, p_rho = spearmanr(smeans["replay"], smeans["acc"])   # robust to single extreme subjects
 
     fig, ax = plt.subplots(figsize=(3.2, 3.0))
     ax.scatter(smeans["replay"], smeans["acc"], color=COLORS[roi],
@@ -345,7 +352,7 @@ def panel_brainbehavior(df_obj, roi, variant, ret_col, ctrl_col,
 
     ax.set_xlabel(ylabel)
     ax.set_ylabel("Retrieval accuracy")
-    ax.set_title(f"{ROI_LABELS[roi]} ({session_label})\nr = {r:.3f}, p = {p:.4f}")
+    ax.set_title(f"{ROI_LABELS[roi]} ({session_label})\nr = {r:.3f}, p = {p:.4f}  |  \u03c1 = {rho:.3f}, p = {p_rho:.4f}")
     fig.tight_layout()
     _save(fig, f"brainbehavior_{metric_short}_{variant}_{roi}_{session_label}")
 
@@ -418,6 +425,7 @@ def main():
     setup_style()
 
     df = pd.read_csv(MASTER_CSV)
+    df = df[df["roi"].isin(ROIS)].copy()      # master holds more ROIs than are plotted
     df["behav_correct"] = pd.to_numeric(df["behav_correct"], errors="coerce")
     df_obj = df[df["object_scene_retrieval"] == "object"].copy()
 

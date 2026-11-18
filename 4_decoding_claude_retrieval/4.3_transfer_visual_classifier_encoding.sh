@@ -12,7 +12,7 @@
 # ==============================================================================
 
 PATH_DATA="$BEEGFS/Sleeplay_Hummel"
-PATH_CODE="$BEEGFS/Sleeplay_Hummel/code/4_decoding_claude_retrieval"
+PATH_CODE="$BEEGFS/Sleeplay_Hummel/sleeplay_git/4_decoding_claude_retrieval"
 PATH_LOG="${PATH_DATA}/logs/transfer_visual_classifier_encoding_enc_ret"
 PATH_SHARED_DERIV="/beegfs/g/schuck/bbd7515/sleeplay/l_loc_main/data/derivatives"
 

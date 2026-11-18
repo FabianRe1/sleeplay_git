@@ -28,6 +28,7 @@ from utils import (
     script_output_dir,
     load_mask,
     CONFOUND_VARS,
+    assert_func_conf_match,
 )
 
 
@@ -37,7 +38,7 @@ from utils import (
 
 root_folder = get_root(".my_hidden_root_file")
 path_fmriprep = "/beegfs/g/schuck/bbd7515/sleeplay/l_loc_main/data/derivatives"
-path_masks = opj(root_folder, 'code', '3_reliability_voxel_selection', 'combine_loc1_and_loc3_masks')
+path_masks = opj(root_folder, 'sleeplay_git', '3_reliability_voxel_selection', 'combine_loc1_and_loc3_masks')
 path_clf_dir = opj(os.path.dirname(os.path.abspath(__file__)), '4.1_train_visual_classifier', 'classifiers')
 
 TR = 1.5
@@ -124,6 +125,7 @@ def load_and_preprocess_func(path_fmriprep, sub_num, mri_sessions_enc, mask_img,
     )
     print('=======================')
     print(path_confs)
+    assert_func_conf_match(path_func, path_confs)
     confs = [pd.read_csv(p, sep='\t') for p in path_confs]
 
     # Mask, smooth, detrend, z-score

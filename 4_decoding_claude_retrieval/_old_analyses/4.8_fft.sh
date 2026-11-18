@@ -11,7 +11,7 @@
 # ==============================================================================
 
 PATH_DATA="$BEEGFS/Sleeplay_Hummel"
-PATH_CODE="$BEEGFS/Sleeplay_Hummel/code/4_decoding_claude_retrieval"
+PATH_CODE="$BEEGFS/Sleeplay_Hummel/sleeplay_git/4_decoding_claude_retrieval"
 PATH_LOG="${PATH_DATA}/logs/4.8_fft_enc_ret"
 TASK_LIST="${PATH_CODE}/fft_task.list"
 

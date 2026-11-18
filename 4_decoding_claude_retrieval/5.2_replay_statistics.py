@@ -74,6 +74,7 @@ import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
 from scipy.stats import ttest_1samp, ttest_rel, pearsonr
+from statsmodels.stats.multitest import multipletests
 
 warnings.filterwarnings("ignore")
 
@@ -86,7 +87,10 @@ METRICS = [
     ("retrieved_soda_abs", "control_soda_abs", "Abs SODA"),
     ("retrieved_w_amplitude", "control_w_amplitude", "Sinus Amp"),
 ]
-ROIS = ["vis", "mtl", "parietal"]
+# The thesis "parietal" ROI was parietal_precuneus data (see 5.1 FOCUS_ROIS).
+# Three ROIs, as in the thesis: the omnibus models (6b) include C(roi) over this
+# list, so adding ROIs changes those models.
+ROIS = ["vis", "mtl", "parietal_precuneus"]
 
 METRICS_SHUFFLED = [
     ("retrieved_soda_shuffled_abs", "control_soda_shuffled_abs",
@@ -247,7 +251,16 @@ def analysis_replay_detection(df, log):
                     n_trial_rows=len(sub),
                 ))
 
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    # FDR (Benjamini-Hochberg) with the families used in the thesis:
+    #   collapsed rows: across ROIs x metrics (3 x 2 = 6 tests)
+    #   per-session rows: across ROIs x sessions x metrics (3 x 2 x 2 = 12 tests)
+    out["p_fdr"] = np.nan
+    for fam in [out["session"] == "collapsed", out["session"] != "collapsed"]:
+        ok = fam & out["p_value"].notna()
+        if ok.any():
+            out.loc[ok, "p_fdr"] = multipletests(out.loc[ok, "p_value"], method="fdr_bh")[1]
+    return out
 
 
 # =====================================================================
@@ -770,7 +783,17 @@ def analysis_brain_behavior(df, log):
                         session=session, r=r, p_value=p, n=len(sm),
                     ))
 
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    # FDR (Benjamini-Hochberg) across the ROIs within each metric x variant x
+    # session — the "FDR across the three ROIs" reported in the thesis. Before
+    # this, the p_FDR values in the thesis were computed by hand.
+    out["p_fdr"] = np.nan
+    for _, idx in out.groupby(["metric", "variant", "session"]).groups.items():
+        ok = out.loc[idx, "p_value"].notna()
+        idx = [i for i, k in zip(idx, ok) if k]
+        if idx:
+            out.loc[idx, "p_fdr"] = multipletests(out.loc[idx, "p_value"], method="fdr_bh")[1]
+    return out
 
 
 # =====================================================================
@@ -1350,6 +1373,9 @@ def run_pipeline(df, results_dir, label=""):
 
 def main():
     df_all = pd.read_csv(MASTER_CSV)
+    # The master dataframe can hold more ROIs than are analysed here; restrict
+    # to ROIS so that models over C(roi) (6b omnibus) use exactly these ROIs.
+    df_all = df_all[df_all["roi"].isin(ROIS)].copy()
 
     # Prepare behavioral column (may be bool or string)
     df_all["behav_correct"] = pd.to_numeric(
