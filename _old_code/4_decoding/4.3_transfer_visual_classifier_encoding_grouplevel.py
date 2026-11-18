@@ -74,6 +74,46 @@ def _plot_subject_lines(
 	plt.close()
 
 
+def _plot_aggregate(
+	subject_to_tc: dict,
+	tr_window: np.ndarray,
+	title: str,
+	out_png: str,
+	chance_level: float = None,
+) -> None:
+	"""Aggregate plot: mean +/- SEM across subjects with shaded error band."""
+	from scipy.stats import sem as scipy_sem
+
+	data = np.vstack(list(subject_to_tc.values()))  # (n_subjects, n_trs)
+	n_subj = data.shape[0]
+	mean_tc = np.mean(data, axis=0)
+	sem_tc = scipy_sem(data, axis=0)
+
+	fig, ax = plt.subplots(figsize=(8, 5))
+
+	# SEM shading
+	ax.fill_between(
+		tr_window, mean_tc - sem_tc, mean_tc + sem_tc,
+		alpha=0.3, color="steelblue",
+	)
+	# Mean line
+	ax.plot(tr_window, mean_tc, color="steelblue", linewidth=3, label="Mean")
+
+	# Chance level
+	if chance_level is not None:
+		ax.axhline(chance_level, color="gray", linestyle=":", linewidth=1, label=f"Chance ({chance_level:.2f})")
+
+	ax.axvline(0, color="red", linestyle="--", linewidth=1, alpha=0.7)
+	ax.set_xlabel("TRs from Onset (+5 s HRF delay)")
+	ax.set_ylabel("Decoding Probability (Target Class)")
+	ax.set_title(f"{title}\n(N = {n_subj})")
+	ax.legend(loc="upper right")
+	ax.grid(True, alpha=0.3)
+	fig.tight_layout()
+	fig.savefig(out_png, dpi=150)
+	plt.close(fig)
+
+
 def main() -> None:
 	# Match how the subject-level script named the files
 	use_overall_classifier1_specific2 = 2
@@ -184,6 +224,24 @@ def main() -> None:
 				f"trained on use_overall_classifier1_specific2_{use_overall_classifier1_specific2}"
 			),
 			out_png=opj(out_dir, png_name),
+		)
+
+		# Aggregate plot (mean +/- SEM)
+		# Chance = 1/n_classes: 10 scenes, 10 object categories
+		chance = 1.0 / 10.0
+		agg_png_name = (
+			f"aggregate_{safe_roi}_decoding_timecourses_{modality}s"
+			f"_use_overall_classifier1_specific2_{use_overall_classifier1_specific2}.png"
+		)
+		_plot_aggregate(
+			subject_to_tc=subject_to_tc,
+			tr_window=tr_window,
+			title=(
+				f"{roi_label} – {modality_label}: Aggregate across subjects\n"
+				f"trained on use_overall_classifier1_specific2_{use_overall_classifier1_specific2}"
+			),
+			out_png=opj(out_dir, agg_png_name),
+			chance_level=chance,
 		)
 
 		np.save(opj(out_dir, npy_name), subject_to_tc)
