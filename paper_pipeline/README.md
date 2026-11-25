@@ -829,6 +829,7 @@ Results are session averages; single runs are not compared (they hold different 
 | E13 | `E13_response_time_course.py` | Supporting check: course of the signal over the trial without an assumed response shape; `E13_MATCHED=1` matches object trials for search time over the three time points |
 | E14 | `E14_region_summary.py` | The tables and region figures quoted in the text, collected from E7, E9, E10 and E13; also the relations to behaviour across participants |
 | E15 | `E15_learning_by_sequence.py` | Learning runs with one estimate per sequence and showing; relation of the change to retrieval success and reaction time within participants |
+| E16 | `E16_paper_figures_univariate.py` | The five univariate figures of the paper in the shared style of `figure_style.py` (as C13 for decoding), drawn from the outputs of E4, E7, E9, E14 and E15; no model is fitted |
 
     cd B_decoding
     bash submit_cluster_jobs.sh E3            # one job per participant
@@ -848,6 +849,7 @@ Results are session averages; single runs are not compared (they hold different 
     python E13_response_time_course.py group && E13_MATCHED=1 python E13_response_time_course.py group
     python E14_region_summary.py
     python E15_learning_by_sequence.py group
+    python E16_paper_figures_univariate.py
 
 E7-E14 were run on 2026-11-23 to 2026-11-25 on the existing masks and behaviour tables, with
 `SLEEPLAY_OUTPUT=<project>/logs/paper_pipeline/DE_check/out` (a folder of links to the existing
