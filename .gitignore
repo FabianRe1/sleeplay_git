@@ -15,6 +15,11 @@
 # Allow this gitignore
 !.gitignore
 
+# Allow the pipeline documentation
+!paper_pipeline/README.md
+!paper_pipeline/PAPER_OUTLINE.md
+!paper_pipeline/_old_scripts/README.md
+
 # Explicitly ignore data and output files even if somehow whitelisted
 *.csv
 *.tsv
