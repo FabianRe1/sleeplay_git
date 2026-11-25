@@ -183,7 +183,7 @@ Scripts are in `B_decoding/`. "Job" means the step runs on the cluster through
 | B7 | `B7_apply_classifiers_retrieval.py` | Apply classifiers to retrieval, evening and morning | `4.4_transfer_visual_classifier_retrieval.py` | job per participant and session | about 1 min per ROI |
 | B8 | `B8_sequentiality_soda.py` | Sequentiality metric (SODA slope, three windows; also with the retrieved item left out) | `4.6_SODA.py` | job per ROI and session | minutes |
 | B9 | `B9_sinusoid_summary.py` | Sinusoid summary of the slope time course (three presets) | `4.7_sinus_1cycle.py` | job per ROI and session, 16 cores | about 2 min |
-| B10 | `B10_trial_level_master_table.py` | Trial-level master table | `5.1_master_replay_dataframe.py` | direct | seconds |
+| B11 | `B11_searchlight_retrieval.py` | Searchlight version of B4 and B7 over the whole brain: object classifier per sphere (centres on a 4 mm grid in standard space, carried into each participant's anatomy; radii 10 to 30 mm), retrieved minus control for the retrieved item, its neighbours and the absolute slope per trial; classifier accuracy per sphere | new (2026-11-25) | `centres` once, then job per participant, 16 cores | about 1 hour |
 
 The "ported from" scripts of B4 to B10 are in `4_decoding_claude_retrieval/`.
 `decoding_utils.py` holds the shared helpers (copy of `4_decoding_claude/utils.py`).
@@ -303,15 +303,13 @@ Scripts are in `C_statistics/`. All run directly and need only stage B outputs.
 
 | Step | Script | Does | Ported from |
 | --- | --- | --- | --- |
-| C1 | `C1_replay_statistics.py` | Replay statistics, full and trial-matched | `5.2_replay_statistics.py` |
-| C2 | `C2_item_reactivation.py` | Item-level reactivation | `5.3_item_reactivation.py` |
-| C3 | `C3_window_comparison.py` | Comparison of metric versions | `5.4_window_comparison.py` |
-| C4a | `C4a_figure_panels_main.py` | Figure panels, main results | `5.0_thesis_figures.py` |
-| C4b | `C4b_figure_panels_statistics.py` | Figure panels, statistics | `5.2_replay_statistics_figures.py` |
-| C5 | `C5_predecessor_reactivation.py` | Reactivation of the items before and after the retrieved item, by lag; predecessor versus successor; session change; forward versus backward evidence with a horizon; region differences | new (2026-11-19) |
-| C6 | `C6_sequence_vs_control.py` | Retrieved sequence versus control sequence per session (sequence evidence, with and without the retrieved item; slope over five items and up to the retrieved item), session contrasts, four main ROIs | new (2026-11-19) |
-| C7 | `C7_brain_behaviour.py` | Relation of every reactivation measure (retrieved item, predecessor, successor, sequence evidence, slope, sinusoid amplitude) to object-retrieval accuracy: between participants, within participants (correct against incorrect trials), change against change; four main ROIs | new (2026-11-19) |
 | C8 | `C8_overnight_change.py` | What changes from the evening to the morning and where: retrieved item, predecessor, successor per time point; which items carry the slope; order test against all orderings of the same probabilities; sinusoid with and without the retrieved item; comparison between ROIs | new (2026-11-19) |
+| C9 | `C9_item_time_courses.py` | Classifier evidence for the retrieved item and the items up to four positions before and after it, each against its matched control (the same position of the other sequence); time courses from cue onset, by time point and by retrieved position | new (2026-11-25) |
+| C10 | `C10_slope_time_courses.py` | Signed and absolute slope over the trial, by retrieved position; the single-trial example of slope and sinusoid fit | new (2026-11-25) |
+| C11 | `C11_slope_amplitude_by_position.py <sub>` / `group` | Sinusoid amplitude and absolute slope, retrieved minus control, with items left out; by time point and region; which items carry the effect; relation to reported retrieval and search time | new (2026-11-25) |
+| C12 | `C12_searchlight_group.py` | Group maps of B11 per time point with whole-brain correction by sign-flipping; clusters; comparison with the regions (`C12_TAG=<space>_r<radius>`) | new (2026-11-25) |
+
+B10 and C1 to C7 were moved to `_old_scripts/` on 2026-11-25 (see the README there); the detailed notes on them further down describe those earlier steps.
 
 Verification (2026-11-18), each script run on the existing stage B results:
 
