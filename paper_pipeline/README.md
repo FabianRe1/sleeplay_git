@@ -56,7 +56,7 @@ Level 1, existing results under `sleeplay_git/`:
 - `7_rsa_exploratory/` 9.1 GB (statistics on existing results, trial patterns)
 - `3_reliability_voxel_selection/` 4.2 GB (voxel masks)
 - `6_univariate_engagement_claude_v2/` 1 GB
-- `Sleeplay_Hummel/tmp_explore_union_vs_intersection/` 1.9 GB (classifier
+- `Sleeplay_Hummel/_old/exploration/tmp_explore_union_vs_intersection/` 1.9 GB (classifier
   accuracy by trial type; temporary folder)
 
 Levels 2 and 3, from the derivatives folder
@@ -309,6 +309,7 @@ Scripts are in `C_statistics/`. All run directly and need only stage B outputs.
 | C11 | `C11_slope_amplitude_by_position.py <sub>` / `group` | Sinusoid amplitude and absolute slope, retrieved minus control, with items left out; by time point and region; which items carry the effect; relation to reported retrieval and search time | new (2026-11-25) |
 | C12 | `C12_searchlight_group.py` | Group maps of B11 per time point with whole-brain correction by sign-flipping; clusters; comparison with the regions (`C12_TAG=<space>_r<radius>`) | new (2026-11-25) |
 | C13 | `C13_paper_figures_decoding.py [1\|2\|3]` | The three decoding figures of the paper (classifiers; retrieved item and neighbours; sequentiality at the three time points) from the tables of B5, B6b, C9 and C11, in the shared look of `figure_style.py`; writes every test shown to `figure_statistics.csv` | new (2026-11-25) |
+| C14 | `C14_matched_search_time.py` | The comparison of the three time points for absolute slope, sinusoid amplitude and item evidence on object trials matched for search time (same number of trials per 0.25 s bin at every time point, 200 draws), on trials matched over two time points only, and with search time as a covariate; tables `trial_table.csv`, `matching.csv`, `group_contrasts.csv`; figure `matched_search_time` (paper: FIGURE_D4) | new (2026-11-25) |
 
 B10 and C1 to C7 were moved to `_old_scripts/` on 2026-11-25 (see the README there); the detailed notes on them further down describe those earlier steps.
 
@@ -617,7 +618,7 @@ Collected during the step-by-step review (2026-11-18). No code was changed for t
   two versions differ by about one percentage point or less in
   cross-validated accuracy and show no consistent difference in reactivation
   of the retrieved item. The exploration is in
-  `Sleeplay_Hummel/tmp_explore_union_vs_intersection/` (temporary; results
+  `Sleeplay_Hummel/_old/exploration/tmp_explore_union_vs_intersection/` (temporary; results
   in its `summary/` folder) and is not part of the pipeline.
 - B3 note for the methods text: the masks are a union (a voxel is kept if it
   is reliable in at least one localizer), although the function and the old
