@@ -21,28 +21,35 @@ control (the control is the other category sequence, as in C9 and C11):
     successor     (missing when the first or last item is retrieved)
 
 In addition the accuracy of the classifier on the localizers is stored
-(trained on one localizer session, tested on the other, both directions).
+(trained on one localizer session, tested on the other, both directions;
+all, shown and recalled trials).
 
-Differences from the region analyses, all forced by the whole-brain setting:
-  - the data are taken in MNI space (fMRIPrep output MNI152NLin2009cAsym,
-    2 mm) so that all participants share one grid; the regions used T1w space
+Space. By default the data are taken in each participant's own anatomy (T1w
+space, as in the region analyses). The sphere centres are defined once in
+standard space (every second voxel, 4 mm grid, of the group grey matter) and
+carried into each participant's anatomy with the fMRIPrep transform, so that
+sphere k is the same place in everyone and the results can be tested on the
+standard grid without resampling any map. B11_SPACE=MNI uses the data in
+standard space instead (MNI152NLin2009cAsym).
+
+Spheres: radii B11_RADII (default 10, 15 and 20 mm: about 520, 1770 and 4190
+voxels of 2 mm). Spheres with less than 30 percent of their volume inside a
+participant's brain mask are skipped for that participant.
+
+Differences from the region analyses:
   - no reliability mask: all brain voxels of a sphere enter, the F-statistic
     selection is done within each sphere
   - the sinusoid amplitude is not computed: its fit takes about 50 ms per
     trial and sequence, which is not feasible for some 20,000 spheres
 
-Spheres: radius RADIUS_MM (10 mm, about 515 voxels) around every second voxel
-(4 mm grid) of the group grey matter. Spheres with fewer than MIN_VOXELS
-voxels inside a participant's brain mask are skipped for that participant.
-
 Input   outputs/B4_train_classifiers/behavior_with_training_columns/sXX/
         outputs/A1_add_tr_columns_main, outputs/A2_add_tr_columns_localizer
         outputs/B7_apply_classifiers_retrieval/<session>/decoding_results_tables_for_SODA/
             sXX_ROI_vis_*.csv   (trial list, sequences, button press, search time)
-        <derivatives>/sub-XX/ses-0{2,3,4,6}/func/  BOLD and brain masks in MNI space
-        <derivatives>/sub-XX/anat/                 grey-matter probability in MNI space
+        <derivatives>/sub-XX/ses-0{2,3,4,6}/func/  BOLD and brain masks
+        <derivatives>/sub-XX/anat/                 grey-matter probability in MNI space, T1w-to-MNI transform
 Output  outputs/B11_searchlight_retrieval/centres.npz, grey_matter_mask.nii.gz
-        outputs/B11_searchlight_retrieval/participants/sXX_searchlight.npz
+        outputs/B11_searchlight_retrieval/participants/sXX_searchlight_<space>_r<radius>.npz
             (per sphere and trial: item, abs_slope, abs_slope_wo, predecessor, successor;
              per sphere: accuracy, n_voxels)
         outputs/B11_searchlight_retrieval/participants/sXX_trials.csv
@@ -51,7 +58,7 @@ Not a port of the original pipeline: added 2026-11-25.
 
 The cross-validated accuracy on the localizers (leave one run out, as in B4/B5;
 all, shown and recalled trials) is computed in a separate pass with
-B11_ONLY_ACCURACY=1 and written to participants/sXX_accuracy.npz.
+B11_ONLY_ACCURACY=1 and written to participants/sXX_accuracy_<space>_r<radius>.npz.
 
 Usage:  python B11_searchlight_retrieval.py centres           (once, before the participants)
         python B11_searchlight_retrieval.py <subject>         e.g. sub-44
@@ -87,10 +94,11 @@ from decoding_utils import CONFOUND_VARS, assert_func_conf_match, parse_subject_
 warnings.filterwarnings("ignore", category=FutureWarning)        # sklearn multi_class, as in B4
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-SPACE = "MNI152NLin2009cAsym"
-RADIUS_MM = 10.0
+MNI = "MNI152NLin2009cAsym"
+SPACE_KEY = os.environ.get("B11_SPACE", "T1w")              # T1w (each participant's own anatomy) or MNI
+SPACE = {"T1w": "T1w", "MNI": MNI}[SPACE_KEY]
+RADII = [float(r) for r in os.environ.get("B11_RADII", "10,15,20").split(",")]
 STRIDE = 2                  # centres on every second voxel in each direction
-MIN_VOXELS = 150
 GM_THRESHOLD = 0.25         # mean grey-matter probability across participants
 SMOOTH, F_PERCENTILE = 4, 30
 TEMPORAL_OFFSETS = (-1, 0, 1, 2)     # B4: temporal smoothing level 3
@@ -116,10 +124,10 @@ def make_centres():
     tables = glob.glob(opj(str(step_input_dir("B7_apply_classifiers_retrieval", opj("presleep", "decoding_results_tables_for_SODA"))),
                            "s*_ROI_vis_*.csv"))
     subs = sorted({"sub-" + re.match(r"s(\d+)_", os.path.basename(t)).group(1) for t in tables})
-    ref = nib.load(sorted(glob.glob(opj(str(DERIVATIVES_DIR), subs[0], "ses-04", "func", f"*space-{SPACE}_boldref.nii.gz")))[0])
+    ref = nib.load(sorted(glob.glob(opj(str(DERIVATIVES_DIR), subs[0], "ses-04", "func", f"*space-{MNI}_boldref.nii.gz")))[0])
     gm, n = np.zeros(ref.shape[:3]), 0
     for s in subs:
-        f = _anat(s, f"space-{SPACE}_label-GM_probseg.nii.gz")
+        f = _anat(s, f"space-{MNI}_label-GM_probseg.nii.gz")
         if f is None:
             print(f"no grey-matter image for {s}")
             continue
@@ -231,6 +239,9 @@ def retrieval_plan(sub, session):
 G = {}      # data shared with the worker processes (fork)
 
 
+
+
+
 def _weights():
     pos = np.arange(1, 6, dtype=float)
     w5 = (pos - pos.mean()) / ((pos - pos.mean()) ** 2).sum()
@@ -244,7 +255,7 @@ def _weights():
 
 def sphere(c):
     vox = G["neigh"][c]
-    if len(vox) < MIN_VOXELS:
+    if len(vox) < G["min_vox"]:
         return None
     Xtr, y = G["Xtr"][:, vox], G["y"]
     clf = B4.build_clf(F_PERCENTILE).fit(*G["resample"](Xtr, y))
@@ -267,11 +278,13 @@ def sphere(c):
         v = np.nanmean(R[t, WINDOW, qq] - C[t, WINDOW, qq], axis=1)
         v[~ok] = np.nan
         near.append(v.astype(np.float16))
-    acc = []
+    hit = np.zeros(len(y), bool)
     for k in (0, 1):                                                    # train on one localizer session, test on the other
         tr, te = G["loc"] == k, G["loc"] != k
-        acc.append((B4.build_clf(F_PERCENTILE).fit(*G["resample"](Xtr[tr], y[tr])).predict(Xtr[te]) == y[te]).mean())
-    return item.astype(np.float16), a5.astype(np.float16), a4.astype(np.float16), near[0], near[1], float(np.mean(acc)), len(vox)
+        hit[te] = B4.build_clf(F_PERCENTILE).fit(*G["resample"](Xtr[tr], y[tr])).predict(Xtr[te]) == y[te]
+    rec = G["recalled"]
+    return (item.astype(np.float16), a5.astype(np.float16), a4.astype(np.float16), near[0], near[1],
+            (hit.mean(), hit[~rec].mean(), hit[rec].mean()), len(vox))
 
 
 def _chunk(cs):
@@ -281,7 +294,7 @@ def _chunk(cs):
 def sphere_accuracy(c):
     """Leave-one-run-out accuracy on the localizers (as B4/B5): all, shown and recalled trials."""
     vox = G["neigh"][c]
-    if len(vox) < MIN_VOXELS:
+    if len(vox) < G["min_vox"]:
         return None
     X, y, runs = G["Xtr"][:, vox], G["y"], G["runs"]
     hit = np.zeros(len(y), bool)
@@ -296,35 +309,36 @@ def _chunk_accuracy(cs):
     return [(c, sphere_accuracy(c)) for c in cs]
 
 
-def accuracy_maps(sub, out, cen, m, Xtr, y, recalled, runs, t0):
+def accuracy_maps(sub, name, radii, aff, centres, centres_mm, m, Xtr, y, recalled, runs, t0):
     good = (Xtr.std(0) > 0) & np.isfinite(Xtr).all(0)
     Xtr = Xtr[:, good]
-    mm = nib.affines.apply_affine(cen["affine"], np.argwhere(m)[good])
-    centres = cen["ijk"][:MAX_CENTRES] if MAX_CENTRES else cen["ijk"]
-    neigh = cKDTree(mm).query_ball_point(nib.affines.apply_affine(cen["affine"], centres), RADIUS_MM)
+    tree = cKDTree(nib.affines.apply_affine(aff, np.argwhere(m)[good]))
     counts = pd.Series(y).value_counts()
     if counts.nunique() > 1:
         from imblearn.over_sampling import SMOTE
         resample = lambda X, yy: SMOTE(random_state=B4.SMOTE_SEED).fit_resample(X, yy)
     else:
         resample = lambda X, yy: (X, yy)
-    G.update(Xtr=Xtr, y=y, runs=runs, recalled=recalled, neigh=neigh, resample=resample)
+    G.update(Xtr=Xtr, y=y, runs=runs, recalled=recalled, resample=resample)
     print(f"{len(y)} training trials ({int((~recalled).sum())} shown, {int(recalled.sum())} recalled), {len(np.unique(runs))} runs")
-    acc = np.full((len(centres), 3), np.nan, np.float32)
     chunks = [np.arange(i, min(i + 20, len(centres))) for i in range(0, len(centres), 20)]
-    t1 = time.time()
-    with mp.get_context("fork").Pool(N_JOBS) as pool:
-        for k, part in enumerate(pool.imap_unordered(_chunk_accuracy, chunks)):
-            for c, r in part:
-                if r is not None:
-                    acc[c] = r
-            if k % 100 == 0:
-                print(f"  {k * 20}/{len(centres)} spheres, {(time.time() - t1) / 60:.1f} min", flush=True)
-    suffix = f"_test{MAX_CENTRES}" if MAX_CENTRES else ""
-    np.savez_compressed(opj(out, f"{sub}_accuracy{suffix}.npz"), all=acc[:, 0], shown=acc[:, 1], recalled=acc[:, 2], centres=centres)
-    print(f"accuracy: all {np.nanmean(acc[:, 0]) * 100:.1f} %, shown {np.nanmean(acc[:, 1]) * 100:.1f} %, "
-          f"recalled {np.nanmean(acc[:, 2]) * 100:.1f} % (mean over spheres); best sphere {np.nanmax(acc[:, 0]) * 100:.1f} %"
-          f"  ({(time.time() - t0) / 60:.1f} min in total)")
+    for radius in radii:
+        G["neigh"] = tree.query_ball_point(centres_mm, radius)
+        G["min_vox"] = 0.3 * 4 / 3 * np.pi * radius ** 3 / 8.0        # 30 percent of a full sphere of 2 mm voxels
+        acc = np.full((len(centres), 3), np.nan, np.float32)
+        t1 = time.time()
+        with mp.get_context("fork").Pool(N_JOBS) as pool:
+            for k, part in enumerate(pool.imap_unordered(_chunk_accuracy, chunks)):
+                for c, r in part:
+                    if r is not None:
+                        acc[c] = r
+                if k % 100 == 0:
+                    print(f"  r = {radius:.0f} mm: {k * 20}/{len(centres)} spheres, {(time.time() - t1) / 60:.1f} min", flush=True)
+        f = name(radius).replace(".npz", f"_test{MAX_CENTRES}.npz") if MAX_CENTRES else name(radius)
+        np.savez_compressed(f, all=acc[:, 0], shown=acc[:, 1], recalled=acc[:, 2], centres=centres)
+        print(f"r = {radius:.0f} mm accuracy: all {np.nanmean(acc[:, 0]) * 100:.1f} %, shown {np.nanmean(acc[:, 1]) * 100:.1f} %, "
+              f"recalled {np.nanmean(acc[:, 2]) * 100:.1f} % (mean over spheres); best sphere {np.nanmax(acc[:, 0]) * 100:.1f} %"
+              f"  ({(time.time() - t0) / 60:.1f} min in total)", flush=True)
 
 
 def run_job(job):
@@ -355,11 +369,10 @@ def run_job(job):
 
 def participant(sub):
     out = str(step_output_dir(__file__, "participants"))
-    target = opj(out, f"{sub}_searchlight.npz")
-    if ONLY_ACCURACY:
-        target = opj(out, f"{sub}_accuracy.npz")
-    if os.path.exists(target) and not MAX_CENTRES:
-        print(f"{target} exists")
+    name = lambda r: opj(out, f"{sub}_{'accuracy' if ONLY_ACCURACY else 'searchlight'}_{SPACE_KEY}_r{r:.0f}.npz")
+    radii = [r for r in RADII if MAX_CENTRES or not os.path.exists(name(r))]
+    if not radii:
+        print(f"{sub}: all outputs exist")
         return
     cen = np.load(opj(str(step_output_dir(__file__)), "centres.npz"))
     t0 = time.time()
@@ -370,10 +383,24 @@ def participant(sub):
     all_funcs = [p[0] for p in loc] + [f for v in ret.values() for f, _ in v[1]]      # same mask in both modes
 
     # brain mask: voxels inside the brain mask of every run used
-    m = np.ones(tuple(cen["shape"]), bool)
+    first = nib.load(all_funcs[0].replace("desc-preproc_bold", "desc-brain_mask"))
+    aff = first.affine
+    m = np.ones(first.shape, bool)
     for f in all_funcs:
-        m &= nib.load(f.replace("desc-preproc_bold", "desc-brain_mask")).get_fdata() > 0
-    mask_img = nib.Nifti1Image(m.astype(np.uint8), cen["affine"])
+        img = nib.load(f.replace("desc-preproc_bold", "desc-brain_mask"))
+        if img.shape != first.shape or not np.allclose(img.affine, aff, atol=1e-3):
+            raise ValueError(f"{sub}: the runs are not on one grid ({f})")
+        m &= img.get_fdata() > 0
+    mask_img = nib.Nifti1Image(m.astype(np.uint8), aff)
+
+    # sphere centres: the same points in standard space for everyone; for T1w they are carried
+    # into the participant's own anatomy (the T1w-to-MNI image transform maps MNI points to T1w points)
+    centres = cen["ijk"][:MAX_CENTRES] if MAX_CENTRES else cen["ijk"]
+    centres_mm = nib.affines.apply_affine(cen["affine"], centres)
+    if SPACE_KEY == "T1w":
+        from nitransforms.manip import load as ntload
+        sub_mri = "sub-" + sub[1:]
+        centres_mm = ntload(_anat(sub_mri, f"from-T1w_to-{MNI}_mode-image_xfm.h5"), fmt="itk").map(centres_mm)
     print(f"{sub}: {len(loc)} localizer runs, {sum(len(v[1]) for v in ret.values())} retrieval runs, {int(m.sum())} voxels")
 
     # --- jobs: one per run, each returns the volumes needed -------------------------------
@@ -397,7 +424,7 @@ def participant(sub):
     recalled = np.concatenate([r[3] for r in res[:nloc]])
     runs = np.concatenate([r[4] for r in res[:nloc]])
     if ONLY_ACCURACY:
-        return accuracy_maps(sub, out, cen, m, Xtr, y, recalled, runs, t0)
+        return accuracy_maps(sub, name, radii, aff, centres, centres_mm, m, Xtr, y, recalled, runs, t0)
     Xret = np.vstack([r[0] for r in res[nloc:]])
     valid = np.concatenate([r[1] for r in res[nloc:]])
     trials = pd.concat([r[2] for r in res[nloc:]], ignore_index=True)
@@ -406,9 +433,7 @@ def participant(sub):
     good = (Xtr.std(0) > 0) & np.isfinite(Xtr).all(0) & np.isfinite(Xret).all(0)
     Xtr, Xret = Xtr[:, good], Xret[:, good]
     vox_ijk = np.argwhere(m)[good]
-    mm = nib.affines.apply_affine(cen["affine"], vox_ijk)
-    centres = cen["ijk"][:MAX_CENTRES] if MAX_CENTRES else cen["ijk"]
-    neigh = cKDTree(mm).query_ball_point(nib.affines.apply_affine(cen["affine"], centres), RADIUS_MM)
+    tree = cKDTree(nib.affines.apply_affine(aff, vox_ijk))
 
     classes = np.unique(y)
     cidx = {c: i for i, c in enumerate(classes)}
@@ -421,30 +446,33 @@ def participant(sub):
     else:
         resample = lambda X, yy: (X, yy)
     w5, wo = _weights()
-    G.update(Xtr=Xtr, y=y, loc=locs, Xret=Xret, valid=valid, neigh=neigh, resample=resample, w5=w5, wo=wo,
+    G.update(Xtr=Xtr, y=y, loc=locs, recalled=recalled, Xret=Xret, valid=valid, resample=resample, w5=w5, wo=wo,
              Ridx=np.array([[cidx[c] for c in s.split("|")] for s in trials.retrieved]),
              Cidx=np.array([[cidx[c] for c in s.split("|")] for s in trials.control]),
              pos=trials.position.values - 1)
 
-    t1 = time.time()
-    order = np.arange(len(centres))
-    chunks = [order[i:i + 20] for i in range(0, len(order), 20)]
+    trials.to_csv(opj(out, f"{sub}_trials.csv"), index=False)
+    chunks = [np.arange(i, min(i + 20, len(centres))) for i in range(0, len(centres), 20)]
     n_tr = len(trials)
-    item, a5, a4, pred, succ = (np.full((len(centres), n_tr), np.nan, np.float16) for _ in range(5))
-    acc, nvox = np.full(len(centres), np.nan, np.float32), np.zeros(len(centres), np.int32)
-    with mp.get_context("fork").Pool(N_JOBS) as pool:
-        for k, part in enumerate(pool.imap_unordered(_chunk, chunks)):
-            for c, r in part:
-                if r is not None:
-                    item[c], a5[c], a4[c], pred[c], succ[c], acc[c], nvox[c] = r
-            if k % 50 == 0:
-                print(f"  {k * 20}/{len(centres)} spheres, {(time.time() - t1) / 60:.1f} min", flush=True)
-    print(f"spheres done in {(time.time() - t1) / 60:.1f} min; accuracy mean {np.nanmean(acc) * 100:.1f} %, max {np.nanmax(acc) * 100:.1f} %")
-
-    suffix = f"_test{MAX_CENTRES}" if MAX_CENTRES else ""
-    np.savez_compressed(opj(out, f"{sub}_searchlight{suffix}.npz"), item=item, abs_slope=a5, abs_slope_wo=a4, predecessor=pred, successor=succ,
-                        accuracy=acc, n_voxels=nvox, centres=centres)
-    trials.to_csv(opj(out, f"{sub}_trials{suffix}.csv"), index=False)
+    for radius in radii:
+        t1 = time.time()
+        G["neigh"] = tree.query_ball_point(centres_mm, radius)
+        G["min_vox"] = 0.3 * 4 / 3 * np.pi * radius ** 3 / 8.0        # 30 percent of a full sphere of 2 mm voxels
+        item, a5, a4, pred, succ = (np.full((len(centres), n_tr), np.nan, np.float16) for _ in range(5))
+        acc, nvox = np.full((len(centres), 3), np.nan, np.float32), np.zeros(len(centres), np.int32)
+        with mp.get_context("fork").Pool(N_JOBS) as pool:
+            for k, part in enumerate(pool.imap_unordered(_chunk, chunks)):
+                for c, r in part:
+                    if r is not None:
+                        item[c], a5[c], a4[c], pred[c], succ[c], acc[c], nvox[c] = r
+                if k % 100 == 0:
+                    print(f"  r = {radius:.0f} mm: {k * 20}/{len(centres)} spheres, {(time.time() - t1) / 60:.1f} min", flush=True)
+        print(f"r = {radius:.0f} mm done in {(time.time() - t1) / 60:.1f} min; {np.median(nvox[nvox > 0]):.0f} voxels per sphere; "
+              f"accuracy mean {np.nanmean(acc[:, 0]) * 100:.1f} %, best sphere {np.nanmax(acc[:, 0]) * 100:.1f} %", flush=True)
+        f = name(radius).replace(".npz", f"_test{MAX_CENTRES}.npz") if MAX_CENTRES else name(radius)
+        np.savez_compressed(f, item=item, abs_slope=a5, abs_slope_wo=a4, predecessor=pred, successor=succ,
+                            accuracy=acc[:, 0], accuracy_shown=acc[:, 1], accuracy_recalled=acc[:, 2], n_voxels=nvox,
+                            centres=centres, centres_mm=centres_mm)
     print(f"-> {out}  ({(time.time() - t0) / 60:.1f} min in total)")
 
 

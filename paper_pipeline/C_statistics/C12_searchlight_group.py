@@ -23,7 +23,8 @@ tested as in C11, to compare with the region analyses.
 Input   outputs/B11_searchlight_retrieval/centres.npz, participants/*.npz, *_trials.csv
         <derivatives>/sub-XX/ses-04/func/*space-MNI152NLin2009cAsym_desc-aparcaseg_dseg.nii.gz
         <derivatives>/desc-aparcaseg_dseg.tsv
-Output  outputs/C12_searchlight_group/maps/<measure>_<time point>_{t,mean,pfwe}.nii.gz  (4 mm grid, MNI)
+Output  (all under outputs/C12_searchlight_group/<space>_r<radius>/, chosen with C12_TAG, default T1w_r20)
+        outputs/C12_searchlight_group/maps/<measure>_<time point>_{t,mean,pfwe}.nii.gz  (4 mm grid, MNI)
         outputs/C12_searchlight_group/group_maps.csv       one line per map
         outputs/C12_searchlight_group/group_clusters.csv   clusters at p < .001 uncorrected
         outputs/C12_searchlight_group/region_check.csv
@@ -69,13 +70,15 @@ REGIONS = {"vis": (1005, 2005, 1011, 2011, 1021, 2021, 1029, 2029, 1013, 2013, 1
            "parietal_precuneus": (1008, 2008, 1025, 2025), "mtl": (17, 53, 1016, 2016, 1006, 2006), "hpc": (17, 53),
            "somato": (1022, 2022), "caudal_acc": (1002, 2002)}
 INK = "#0b0b0b"
+TAG = os.environ.get("C12_TAG", "T1w_r20")        # which searchlight: <space>_r<radius>, as in the B11 file names
+ACCURACY = {"accuracy": "All trials", "accuracy_shown": "Image shown", "accuracy_recalled": "Image recalled"}
 
 
 def load():
     src = str(step_input_dir("B11_searchlight_retrieval"))
     cen = np.load(opj(src, "centres.npz"))
     data, labels = {}, {}
-    for f in sorted(glob.glob(opj(src, "participants", "s*_searchlight.npz"))):
+    for f in sorted(glob.glob(opj(src, "participants", f"s*_searchlight_{TAG}.npz"))):
         sub = os.path.basename(f).split("_")[0]
         z = np.load(f)
         tr = pd.read_csv(opj(src, "participants", f"{sub}_trials.csv"))
@@ -87,7 +90,10 @@ def load():
                 d[m] = {c: np.nanmean(x[:, (tr.cond == c).values], axis=1) if (tr.cond == c).any() else None
                         for c in ("pre", "post1", "post2")}
                 d[m]["pooled"] = np.nanmean(x, axis=1)
-        d["accuracy"] = {"pooled": z["accuracy"] * 100.0 - 10.0}
+        for a in ACCURACY:
+            if a in z.files:
+                d[a] = {"pooled": z[a] * 100.0 - 10.0}
+        d["n_voxels"] = z["n_voxels"]
         data[sub] = d
         seg = sorted(glob.glob(opj(str(DERIVATIVES_DIR), "sub-" + sub[1:], "ses-0[246]", "func",
                                    "*space-MNI152NLin2009cAsym_desc-aparcaseg_dseg.nii.gz")))
@@ -168,9 +174,9 @@ def clusters(res, cen, names, mode_label, tag):
 
 
 def figure(maps, title, rows, plot_dir, name, cen, labels_of_rows, vmax=None):
-    fig = plt.figure(figsize=(15, 2.05 * len(rows) + 0.6))
+    fig = plt.figure(figsize=(15, 2.05 * len(rows) + 0.85))
     gs = fig.add_gridspec(len(rows), 2, width_ratios=[7.6, 2.4], hspace=0.05, wspace=0.01, left=0.01, right=0.99,
-                          top=1 - 0.5 / (2.05 * len(rows) + 0.6), bottom=0.01)
+                          top=1 - 0.75 / (2.05 * len(rows) + 0.6), bottom=0.01)
     df = MIN_SUBJECTS
     for i, key in enumerate(rows):
         res = maps[key]
@@ -193,15 +199,15 @@ def figure(maps, title, rows, plot_dir, name, cen, labels_of_rows, vmax=None):
                 ax.set_title(f"{labels_of_rows[key]}   (n = {int(np.nanmax(res['n']))}; peak t = {np.nanmax(res['t']):.1f}, "
                              f"lowest t = {np.nanmin(res['t']):.1f}; {n_fwe} spheres corrected)", loc="left", fontsize=9.5,
                              fontweight="bold", color=INK)
-    fig.suptitle(f"{title}. t across participants, shown at p < .001 uncorrected; black outline: p < .05 corrected over the whole brain.",
-                 fontsize=10.5, x=0.01, ha="left")
+    fig.text(0.01, 1 - 0.12 / (2.05 * len(rows) + 0.6), f"{title} ({TAG.replace('_r', ', spheres of ')} mm radius). t across participants, "
+             "shown at p < .001 uncorrected; black outline: p < .05 corrected over the whole brain.", fontsize=10.5, va="top")
     for ext, kw in (("png", {"dpi": 200}), ("pdf", {})):
         fig.savefig(opj(plot_dir, f"{name}.{ext}"), **kw)
     plt.close(fig)
 
 
 def main():
-    out, plot_dir = str(step_output_dir(__file__)), str(step_plot_dir(__file__))
+    out, plot_dir = str(step_output_dir(__file__, TAG)), str(step_plot_dir(__file__, TAG))
     os.makedirs(opj(out, "maps"), exist_ok=True)
     cen, data, labels = load()
     print(f"{len(data)} participants, {len(cen['ijk'])} spheres")
@@ -212,7 +218,9 @@ def main():
 
     rng = np.random.default_rng(1)
     summary, clus, results = [], [], {}
-    todo = [(m, c) for m in MEASURES for c in CONDS] + [("accuracy", "pooled")]
+    acc_keys = [a for a in ACCURACY if all(a in d for d in data.values())]
+    todo = [(m, c) for m in MEASURES for c in CONDS] + [(a, "pooled") for a in acc_keys]
+    print(f"{TAG}: median voxels per sphere {np.median([np.median(d['n_voxels'][d['n_voxels'] > 0]) for d in data.values()]):.0f}")
     for measure, cond in todo:
         X, subs = matrix(data, measure, cond)
         res = tmap(X, rng)
@@ -238,14 +246,14 @@ def main():
 
     # --- region check -----------------------------------------------------------------------
     rows = []
-    for measure in list(MEASURES) + ["accuracy"]:
-        for cond in (CONDS if measure != "accuracy" else ["pooled"]):
+    for measure in list(MEASURES) + acc_keys:
+        for cond in (CONDS if measure in MEASURES else ["pooled"]):
             X, subs = matrix(data, measure, cond)
             for roi, ids in REGIONS.items():
                 v = np.array([np.nanmean(x[np.isin(labels[s], ids)]) for x, s in zip(X, subs) if s in labels])
                 v = v[np.isfinite(v)]
                 r = stats.ttest_1samp(v, 0)
-                rows.append(dict(measure=measure, cond=cond, roi=roi, n=len(v), mean=v.mean(), t=r.statistic, p=r.pvalue,
+                rows.append(dict(tag=TAG, measure=measure, cond=cond, roi=roi, n=len(v), mean=v.mean(), t=r.statistic, p=r.pvalue,
                                  spheres=float(np.mean([np.isin(labels[s], ids).sum() for s in subs if s in labels]))))
     pd.DataFrame(rows).to_csv(opj(out, "region_check.csv"), index=False)
 
@@ -256,8 +264,20 @@ def main():
     figure({m: results[(m, "post1 - pre")] for m in MEASURES}, "Change from the evening to the first morning retrieval",
            list(MEASURES), plot_dir, "change", cen, MEASURES)
     figure({m: results[(m, "pooled")] for m in MEASURES}, "All trials", list(MEASURES), plot_dir, "all_trials", cen, MEASURES)
-    figure({"pooled": results[("accuracy", "pooled")]}, "Classifier accuracy on the localizers minus chance", ["pooled"],
-           plot_dir, "accuracy", cen, {"pooled": "Trained on one localizer session, tested on the other"})
+    figure({a: results[(a, "pooled")] for a in acc_keys}, "Classifier accuracy on the localizers against chance "
+           "(trained on one localizer session, tested on the other)", acc_keys, plot_dir, "accuracy", cen, ACCURACY, vmax=12)
+    # mean accuracy in percent, not thresholded by a test: how well can the objects be decoded at all
+    fig = plt.figure(figsize=(15, 2.05 * len(acc_keys) + 0.6))
+    for i, a in enumerate(acc_keys):
+        ax = fig.add_axes([0.01, 1 - (i + 1) * 0.95 / len(acc_keys) - 0.02, 0.98, 0.9 / len(acc_keys)])
+        plotting.plot_stat_map(to_img(results[(a, "pooled")]["mean"] + 10.0, cen), display_mode="z",
+                               cut_coords=[-18, -6, 6, 18, 30, 42, 54, 66], threshold=10.5, vmax=22, axes=ax, cmap="inferno",
+                               black_bg=False, symmetric_cbar=False, draw_cross=False, colorbar=True)
+        ax.set_title(f"{ACCURACY[a]}: mean accuracy in percent (chance 10; shown above 10.5; best sphere "
+                     f"{np.nanmax(results[(a, 'pooled')]['mean']) + 10:.1f})", loc="left", fontsize=9.5, fontweight="bold")
+    for ext, kw in (("png", {"dpi": 200}), ("pdf", {})):
+        fig.savefig(opj(plot_dir, f"accuracy_percent.{ext}"), **kw)
+    plt.close(fig)
     print(f"-> {out}\n-> {plot_dir}")
 
 
