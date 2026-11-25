@@ -308,6 +308,7 @@ Scripts are in `C_statistics/`. All run directly and need only stage B outputs.
 | C10 | `C10_slope_time_courses.py` | Signed and absolute slope over the trial, by retrieved position; the single-trial example of slope and sinusoid fit | new (2026-11-25) |
 | C11 | `C11_slope_amplitude_by_position.py <sub>` / `group` | Sinusoid amplitude and absolute slope, retrieved minus control, with items left out; by time point and region; which items carry the effect; relation to reported retrieval and search time | new (2026-11-25) |
 | C12 | `C12_searchlight_group.py` | Group maps of B11 per time point with whole-brain correction by sign-flipping; clusters; comparison with the regions (`C12_TAG=<space>_r<radius>`) | new (2026-11-25) |
+| C13 | `C13_paper_figures_decoding.py [1\|2\|3]` | The three decoding figures of the paper (classifiers; retrieved item and neighbours; sequentiality at the three time points) from the tables of B5, B6b, C9 and C11, in the shared look of `figure_style.py`; writes every test shown to `figure_statistics.csv` | new (2026-11-25) |
 
 B10 and C1 to C7 were moved to `_old_scripts/` on 2026-11-25 (see the README there); the detailed notes on them further down describe those earlier steps.
 
